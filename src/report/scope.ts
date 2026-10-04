@@ -140,8 +140,11 @@ export type FindingView = {
 };
 
 /** The first findings of a check, cleaned, and how many were left out. */
-export function findingsView(check: CheckOutcome): { shown: FindingView[]; more: number } {
-  const shown = check.findings.slice(0, FINDINGS_SHOWN).map((f): FindingView => ({
+export function findingsView(
+  check: CheckOutcome,
+  limit: number = FINDINGS_SHOWN,
+): { shown: FindingView[]; more: number } {
+  const shown = check.findings.slice(0, limit).map((f): FindingView => ({
     url: f.url === null ? null : cleanUrl(f.url),
     detail: clean(f.detail),
     severity: f.severity === check.severity ? null : f.severity,
