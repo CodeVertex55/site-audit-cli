@@ -31,7 +31,7 @@ Sitemaps are taken from the `Sitemap` lines in robots.txt. When there are none, 
 - A sitemap on a different site is not read. A redirect from a sitemap URL is followed only within the same site: the same hostname (for example http to https) or its www or apex counterpart. A redirect to any other site is not followed and the sitemap is recorded as not read.
 - A sitemap is read as a stream of tags, not as a tree. Only `loc` elements directly inside `url` (or `sitemap` in an index) are used, and reading stops at a nesting depth of 16.
 - Element names are compared by local name, so a prefixed sitemap such as `<sm:urlset>` is read. A `loc` counts only when its prefix is the root's, so extension elements such as `image:loc` are not taken as pages.
-- When robots.txt names no sitemap, `/sitemap.xml` is not requested if robots.txt disallows it. When it answers with an HTML page that does not parse as a sitemap, no sitemap file is recorded. Many sites answer every path with a page.
+- When robots.txt names no sitemap, `/sitemap.xml` is not requested if robots.txt disallows it. It is then recorded with a note, counted as skipped by robots.txt, and the missing-sitemap finding says why. When it answers with an HTML page that does not parse as a sitemap, no sitemap file is recorded. Many sites answer every path with a page.
 - Sitemap files that robots.txt names, those a sitemap index lists, and the same-site redirect targets of any sitemap URL are read even when robots.txt disallows their paths. This is the one case where the tool requests a path on the audited site that robots.txt disallows.
 
 With `--ignore-robots`, robots.txt is still read for its `Sitemap` lines, but its rules are not applied.
@@ -54,7 +54,7 @@ The crawl is breadth first. The start URL is at depth 0. Links found on a page a
 - The headers sent are `User-Agent` and `Accept`. The runtime decides `Accept-Encoding`. No cookies are stored or sent, and there is no `Authorization` header.
 - Redirects are followed by the crawler, up to 10 hops. A URL that repeats in the chain is a loop. A redirect that leaves the audit origin is not followed during the crawl.
 - "Response time" is the time from sending the request to receiving the response headers. It is measured once, from the machine that runs the audit.
-- Only text bodies (HTML, XML, plain text, JSON and other `text/` types) are downloaded, up to 5 MB. A longer body is cut at 5 MB, parsed as far as it goes, and flagged as truncated. For any other body the size is taken from `Content-Length`, and the body is not read.
+- Only text-like bodies (any `text/` type, HTML, XML including SVG, and JSON) are downloaded, up to 5 MB. A longer body is cut at 5 MB, parsed as far as it goes, and flagged as truncated. For any other body the size is taken from `Content-Length`, and the body is not read.
 - Bodies are decoded with the charset from `Content-Type`, then from a `<meta charset>` near the top of the document, then as UTF-8.
 - The parser keeps the facts that the checks need for each page, not the document tree.
 
@@ -96,7 +96,7 @@ Asset size requests, external link checks and the http variant, sibling host and
 - A robots.txt that redirects to a different site is not followed. It is treated as unreadable, which means exit code 3 unless `--ignore-robots` is used.
 - A robots.txt redirect within the same site, such as http to https or www to apex, is followed.
 - robots.txt is read as text whatever its `Content-Type`, up to 512 KB. Rules after the first 512 KB are ignored, the line cut at that point is dropped so a shortened rule cannot change meaning, and a note on stderr says so.
-- The rules are matched by path, so they also apply to URLs on the audited hostname under another scheme or port. Such an asset or external link that the rules disallow is not requested, and a redirect that lands on a disallowed path is not followed. With `--ignore-robots` only the pacing applies.
+- The rules are matched by path, so they also apply to URLs on the audited hostname under another scheme or port, and to the same hostname written with a trailing dot (`example.com.`). Such an asset or external link that the rules disallow, or that `--exclude` matches, is not requested, and a redirect that lands on such a path is not followed. With `--ignore-robots` only the pacing and `--exclude` apply.
 
 ## Assets
 
