@@ -27,6 +27,17 @@ function opts(site: TestSite, over: Partial<AuditOptions> = {}): AuditOptions {
   return { ...DEFAULT_OPTIONS, startUrl: site.url("/"), delayMs: 0, timeoutMs: 2000, ...over };
 }
 
+/** A fetch that serves the site for real and records anything else instead of sending it. */
+function offOriginSpy(site: TestSite): { fetchImpl: typeof fetch; seen: string[] } {
+  const web = fakeWeb({});
+  const real = globalThis.fetch;
+  const fetchImpl: typeof fetch = (input, init) => {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return raw.startsWith(site.origin) ? real(input, init) : web.fetchImpl(input, init);
+  };
+  return { fetchImpl, seen: web.seen };
+}
+
 function pageAt(ctx: SiteContext, url: string): PageRecord {
   const found = ctx.pages.find((p) => p.url === url);
   if (found === undefined) throw new Error(`No page record for ${url}`);
@@ -221,6 +232,7 @@ describe("start URL", () => {
     expect(pageAt(ctx, target.url("/")).doc?.title).toBe("Target");
     expect(origin.hits("/")).toBe(1);
     expect(target.hits("/")).toBe(1);
+    expect(target.hits("/robots.txt")).toBe(1);
   });
 
   test("the origin note is null when the origin does not change", async () => {
@@ -239,9 +251,9 @@ describe("limits", () => {
       "/a": { body: page() },
       "/b": { body: page() },
     });
-    await crawlSite(opts(site, { delayMs: 120, concurrency: 2 }));
+    await crawlSite(opts(site, { delayMs: 200, concurrency: 2 }));
     const times = site.log.map((r) => r.at);
-    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(100);
+    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(150);
   });
 
   test("maxPages stops the crawl and counts what was left", async () => {
@@ -557,6 +569,122 @@ describe("redirects", () => {
     expect(pageAt(ctx, site.url("/")).hops).toHaveLength(1);
     expect(pageAt(ctx, site.url("/home")).doc?.title).toBe("Home");
     expect(site.hits("/home")).toBe(1);
+  });
+});
+
+describe("requests stay on the origin and out of disallowed paths", () => {
+  test("a robots.txt that redirects to another host is unreadable and nothing is sent there", async () => {
+    const site = await start({
+      "/robots.txt": { status: 301, headers: { location: "https://other.example/robots.txt" } },
+      "/": { body: page() },
+    });
+    const spy = offOriginSpy(site);
+    const run = crawlSite(opts(site), { fetchImpl: spy.fetchImpl });
+    await expect(run).rejects.toBeInstanceOf(UnreachableError);
+    await expect(crawlSite(opts(site), { fetchImpl: spy.fetchImpl })).rejects.toThrow(
+      /redirected to another host/,
+    );
+    expect(site.hits("/")).toBe(0);
+    expect(spy.seen).toEqual([]);
+
+    const ctx = await crawlSite(opts(site, { ignoreRobots: true }), { fetchImpl: spy.fetchImpl });
+    expect(ctx.robots).toMatchObject({ status: 301, present: false, ignored: true });
+    expect(spy.seen).toEqual([]);
+  });
+
+  test("a sitemap.xml that redirects to another host is noted and nothing is sent there", async () => {
+    const site = await start({
+      "/sitemap.xml": { status: 302, headers: { location: "https://other.example/sitemap.xml" } },
+      "/": { body: page() },
+    });
+    const spy = offOriginSpy(site);
+    const ctx = await crawlSite(opts(site), { fetchImpl: spy.fetchImpl });
+    expect(spy.seen).toEqual([]);
+    expect(ctx.sitemap.found).toBe(false);
+    expect(ctx.sitemap.files).toEqual([
+      {
+        url: site.url("/sitemap.xml"),
+        status: 302,
+        ok: false,
+        note: "redirected to another host, not read",
+      },
+    ]);
+  });
+
+  test("a sitemap named in robots.txt that redirects to another host is noted and not followed", async () => {
+    const site = await start({
+      "/robots.txt": (req) => ({
+        headers: ROBOTS_TEXT,
+        body: `Sitemap: http://${req.headers.host}/named.xml
+`,
+      }),
+      "/named.xml": { status: 301, headers: { location: "https://other.example/named.xml" } },
+      "/": { body: page() },
+    });
+    const spy = offOriginSpy(site);
+    const ctx = await crawlSite(opts(site), { fetchImpl: spy.fetchImpl });
+    expect(spy.seen).toEqual([]);
+    expect(ctx.sitemap.files).toHaveLength(1);
+    expect(ctx.sitemap.files[0]).toMatchObject({ status: 301, ok: false });
+    expect(ctx.sitemap.files[0]?.note).toMatch(/another host/);
+  });
+
+  test("a start URL that redirects into a disallowed path never requests it", async () => {
+    const site = await start({
+      "/robots.txt": { headers: ROBOTS_TEXT, body: "User-agent: *\nDisallow: /secret/\n" },
+      "/": { status: 302, headers: { location: "/secret/" } },
+      "/secret/": { body: page({ title: "Secret" }) },
+    });
+    await expect(crawlSite(opts(site))).rejects.toBeInstanceOf(UnreachableError);
+    await expect(crawlSite(opts(site))).rejects.toThrow(/disallows/);
+    expect(site.hits("/secret/")).toBe(0);
+
+    const ctx = await crawlSite(opts(site, { ignoreRobots: true }));
+    expect(site.hits("/secret/")).toBe(1);
+    expect(pageAt(ctx, site.url("/secret/")).doc?.title).toBe("Secret");
+  });
+
+  test("a start URL that redirects into an excluded path never requests it, even with robots ignored", async () => {
+    const site = await start({
+      "/": { status: 302, headers: { location: "/private/x" } },
+      "/private/x": { body: page() },
+    });
+    await expect(crawlSite(opts(site, { exclude: ["/private/**"] }))).rejects.toThrow(/exclude/);
+    await expect(
+      crawlSite(opts(site, { exclude: ["/private/**"], ignoreRobots: true })),
+    ).rejects.toBeInstanceOf(UnreachableError);
+    expect(site.hits("/private/x")).toBe(0);
+  });
+
+  test("a start URL that moves to another origin is held to that origin's robots.txt", async () => {
+    const target = await start({
+      "/robots.txt": { headers: ROBOTS_TEXT, body: "User-agent: *\nDisallow: /secret/\n" },
+      "/secret/x": { body: page() },
+    });
+    const origin = await start({
+      "/": { status: 302, headers: { location: target.url("/secret/x") } },
+    });
+    await expect(crawlSite(opts(origin))).rejects.toThrow(/disallows/);
+    expect(target.hits("/secret/x")).toBe(0);
+    expect(target.hits("/robots.txt")).toBeGreaterThan(0);
+  });
+
+  test("a start URL that moves to an origin with an unreadable robots.txt requests only robots.txt there", async () => {
+    const target = await start({
+      "/robots.txt": { status: 500, body: "oops" },
+      "/": { body: page() },
+    });
+    const origin = await start({ "/": { status: 302, headers: { location: target.url("/") } } });
+    await expect(crawlSite(opts(origin))).rejects.toThrow(/robots.txt could not be read/);
+    expect(paths(target)).toEqual(["/robots.txt"]);
+  });
+
+  test("a start URL that passes through a second foreign host is not followed there", async () => {
+    const last = await start({ "/": { body: page() } });
+    const middle = await start({ "/": { status: 302, headers: { location: last.url("/") } } });
+    const origin = await start({ "/": { status: 302, headers: { location: middle.url("/") } } });
+    await expect(crawlSite(opts(origin))).rejects.toThrow(/several hosts/);
+    expect(last.log).toEqual([]);
   });
 });
 
@@ -931,9 +1059,9 @@ describe("external hosts", () => {
 
   test("other hosts are held to one request at a time", async () => {
     const other = await start({
-      "/a": { body: page(), delayMs: 120 },
-      "/b": { body: page(), delayMs: 120 },
-      "/c": { body: page(), delayMs: 120 },
+      "/a": { body: page(), delayMs: 200 },
+      "/b": { body: page(), delayMs: 200 },
+      "/c": { body: page(), delayMs: 200 },
     });
     const site = await start({
       "/": { body: page({ body: linkTo(other.url("/a"), other.url("/b"), other.url("/c")) }) },
@@ -941,7 +1069,7 @@ describe("external hosts", () => {
     await crawlSite(opts(site, { checkExternal: true, concurrency: 4 }));
     const times = other.log.map((r) => r.at);
     expect(times).toHaveLength(3);
-    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(100);
+    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(150);
   });
 });
 

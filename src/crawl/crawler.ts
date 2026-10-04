@@ -67,7 +67,7 @@ type Opened = {
 };
 
 type Fetchers = {
-  /** Audit origin, no guards. Start page, robots.txt, sitemaps and the http variant probe. */
+  /** Audit host, no guards. Only for the http variant probe, which follows no redirect. */
   main: Fetcher;
   /** Audit origin, never leaves the origin or enters robots-disallowed or excluded paths. */
   crawl: Fetcher;
@@ -96,20 +96,43 @@ function mediaTypeOf(value: string | undefined): string | null {
   return mediaType === "" ? null : mediaType;
 }
 
+type Verdict = BlockReason | null | Promise<BlockReason | null>;
+
+/** A fetch that refuses, before touching the network, any URL the verdict function blocks. */
 function guardedFetch(
   base: typeof fetch,
-  reasonFor: (url: string) => BlockReason | null,
+  reasonFor: (url: string) => Verdict,
   blockedAt: Map<string, BlockReason>,
 ): typeof fetch {
-  return (input, init) => {
+  return async (input, init) => {
     const url = urlOf(input);
-    const reason = reasonFor(url);
+    const reason = await reasonFor(url);
     if (reason === null) return base(input, init);
     blockedAt.set(url, reason);
-    return Promise.reject(
-      Object.assign(new Error(`Request not sent: ${reason}`), { code: BLOCKED_CODE }),
-    );
+    throw Object.assign(new Error(`Request not sent: ${reason}`), { code: BLOCKED_CODE });
   };
+}
+
+/** How fetchers are made: the shared gate and fetch, plus a way to add a guard. */
+type Net = {
+  baseFetch: typeof fetch;
+  make: (fetchImpl: typeof fetch) => Fetcher;
+};
+
+/** A fetcher on the audit gate that refuses every URL outside the given origin. */
+function originOnly(net: Net, origin: string): Fetcher {
+  return net.make(
+    guardedFetch(net.baseFetch, (url) => (sameOrigin(url, origin) ? null : "origin"), new Map()),
+  );
+}
+
+/** True when a fetch failed because a redirect led away from `origin` and was not followed. */
+function leftOrigin(r: FetchResult, origin: string): boolean {
+  return r.failure === "other" && r.hops.length > 0 && !sameOrigin(r.finalUrl, origin);
+}
+
+function lastHopStatus(r: FetchResult): number | null {
+  return r.hops[r.hops.length - 1]?.status ?? null;
 }
 
 /** Runs `fn` over the items with at most `limit` in flight, starting them in order. */
@@ -157,13 +180,15 @@ async function loadRobots(
 ): Promise<RobotsState> {
   const r = await fetcher.get(`${origin}/robots.txt`);
   const ignored = options.ignoreRobots;
+  const movedAway = leftOrigin(r, origin);
   const none = (unreadable: string | null): RobotsState => ({
     file: null,
-    summary: robotsSummary(r.status, false, ignored),
+    summary: robotsSummary(movedAway ? lastHopStatus(r) : r.status, false, ignored),
     delayMs: null,
     clamped: false,
     unreadable,
   });
+  if (movedAway) return none("it redirected to another host");
   if (r.status === null) return none(r.failure ?? "other");
   if (r.status >= 500) return none(`status ${r.status}`);
   if (r.status < 200 || r.status >= 300) return none(null);
@@ -233,36 +258,83 @@ function applyCrawlDelay(
   }
 }
 
+/** Throws the right UnreachableError for a start fetch that failed. */
+function failStart(
+  start: FetchResult,
+  blockedAt: Map<string, BlockReason>,
+  robotsFor: (origin: string) => RobotsState | undefined,
+  options: AuditOptions,
+): never {
+  const reason = start.failure === "other" ? blockedAt.get(start.finalUrl) : undefined;
+  const blockedOrigin = originOf(start.finalUrl);
+  if (reason === "robots") {
+    const state = robotsFor(blockedOrigin);
+    if (state !== undefined) enforceRobots(state, blockedOrigin, start.finalUrl, options);
+  }
+  if (reason === "excluded") {
+    throw new UnreachableError(
+      `The start URL redirects to ${start.finalUrl}, which matches an --exclude pattern.`,
+    );
+  }
+  if (reason === "origin") {
+    throw new UnreachableError(
+      `The start URL redirects across several hosts. It was not followed to ${start.finalUrl}.`,
+    );
+  }
+  throw new UnreachableError(`Could not reach ${start.url} (${start.failure ?? "other"}).`);
+}
+
 /**
  * Reads robots.txt, fetches the start URL and works out the audit origin. robots.txt comes
  * first, so a Crawl-delay applies from the first page request and a disallowed start URL is
- * never requested. When the start URL moves to another origin, that origin's robots.txt is read.
+ * never requested. Every hop of the start URL's redirect chain is checked before it is sent:
+ * it must not match --exclude or be disallowed by robots.txt. A hop to another origin is allowed
+ * once, as the move of the audit origin, and only after that origin's robots.txt has been read.
  */
 async function openSite(
   options: AuditOptions,
-  fetcher: Fetcher,
+  net: Net,
   gate: HostGate,
   say: Say,
 ): Promise<Opened> {
   const requested = normaliseUrl(options.startUrl) ?? options.startUrl;
   const requestedOrigin = originOf(requested);
+  const robotsByOrigin = new Map<string, RobotsState>();
+  const blockedAt = new Map<string, BlockReason>();
 
-  let robots = await loadRobots(fetcher, requestedOrigin, options);
-  enforceRobots(robots, requestedOrigin, requested, options);
-  applyCrawlDelay(gate, requestedOrigin, robots, options, say);
+  const requestedRobots = await loadRobots(
+    originOnly(net, requestedOrigin),
+    requestedOrigin,
+    options,
+  );
+  robotsByOrigin.set(requestedOrigin, requestedRobots);
+  enforceRobots(requestedRobots, requestedOrigin, requested, options);
+  applyCrawlDelay(gate, requestedOrigin, requestedRobots, options, say);
 
-  const start = await fetcher.get(requested);
-  if (start.status === null) {
-    throw new UnreachableError(`Could not reach ${requested} (${start.failure ?? "other"}).`);
-  }
+  let currentOrigin = requestedOrigin;
+  const verdict = async (url: string): Promise<BlockReason | null> => {
+    if (url === requested) return null;
+    const hopOrigin = originOf(url);
+    if (hopOrigin !== currentOrigin) {
+      if (currentOrigin !== requestedOrigin) return "origin";
+      const loaded = await loadRobots(originOnly(net, hopOrigin), hopOrigin, options);
+      robotsByOrigin.set(hopOrigin, loaded);
+      currentOrigin = hopOrigin;
+    }
+    if (isExcluded(url, options.exclude)) return "excluded";
+    const state = robotsByOrigin.get(currentOrigin);
+    if (!options.ignoreRobots && state !== undefined) {
+      if (state.unreadable !== null || !robotsAllows(state, url)) return "robots";
+    }
+    return null;
+  };
+  const startFetcher = net.make(guardedFetch(net.baseFetch, verdict, blockedAt));
+
+  const start = await startFetcher.get(requested);
+  if (start.status === null) failStart(start, blockedAt, (o) => robotsByOrigin.get(o), options);
   const origin = originOf(start.finalUrl);
-  if (origin !== requestedOrigin) {
-    robots = await loadRobots(fetcher, origin, options);
-    enforceRobots(robots, origin, start.finalUrl, options);
-    applyCrawlDelay(gate, origin, robots, options, say);
-  } else if (start.finalUrl !== requested) {
-    enforceRobots(robots, origin, start.finalUrl, options);
-  }
+  const robots = robotsByOrigin.get(origin) ?? requestedRobots;
+  if (origin !== requestedOrigin) applyCrawlDelay(gate, origin, robots, options, say);
   if (start.status >= 400) {
     throw new UnreachableError(`The start URL answered with status ${start.status}.`);
   }
@@ -313,7 +385,11 @@ async function loadSitemaps(
     }
     const r = await fetcher.get(item.url);
     if (r.status === null) {
-      record(item.url, null, false, r.failure ?? "other");
+      if (leftOrigin(r, origin)) {
+        record(item.url, lastHopStatus(r), false, "redirected to another host, not read");
+      } else {
+        record(item.url, null, false, r.failure ?? "other");
+      }
       continue;
     }
     if (r.status !== 200) {
@@ -773,8 +849,9 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
       onThrottle,
     });
   const main = build(gate, baseFetch);
+  const net: Net = { baseFetch, make: (fetchImpl) => build(gate, fetchImpl) };
 
-  const opened = await openSite(options, main, gate, say);
+  const opened = await openSite(options, net, gate, say);
   const { origin, robots } = opened;
   const robotsBlocks = (url: string): boolean =>
     !options.ignoreRobots && !robotsAllows(robots, url);
@@ -791,7 +868,7 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     other: build(otherGate, baseFetch),
   };
 
-  const sitemap = await loadSitemaps(main, origin, robots.summary.sitemaps, say);
+  const sitemap = await loadSitemaps(originOnly(net, origin), origin, robots.summary.sitemaps, say);
   const crawl = await crawlPages({
     options,
     origin,
