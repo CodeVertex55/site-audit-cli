@@ -7,8 +7,8 @@ import {
   existsSync,
   realpathSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { locateLighthouse } from "../src/lighthouse/locate.js";
 import { parseLighthouseResult } from "../src/lighthouse/parse.js";
@@ -49,7 +49,9 @@ afterEach(async () => {
 const ENTRY = ["node_modules", "lighthouse", "cli", "index.js"];
 
 describe("locateLighthouse", () => {
-  const base = { explicitPath: null, pathEnv: "", platform: "linux" as const };
+  // The host platform, so the PATH delimiter always matches the temp paths built by node:path.
+  const platform = process.platform;
+  const base = { explicitPath: null, pathEnv: "", platform };
 
   test("an explicit package folder resolves to its cli/index.js", () => {
     const root = tempDir();
@@ -99,7 +101,12 @@ describe("locateLighthouse", () => {
     const cwd = join(root, "work");
     mkdirSync(cwd);
     expect(
-      locateLighthouse({ explicitPath: null, cwd, pathEnv: `${root};${bin}`, platform: "win32" }),
+      locateLighthouse({
+        explicitPath: null,
+        cwd,
+        pathEnv: [root, bin].join(";"),
+        platform: "win32",
+      }),
     ).toBe(entry);
   });
 
@@ -110,9 +117,14 @@ describe("locateLighthouse", () => {
     const entry = resolve(touch(join(root, "lib", ...ENTRY)));
     const cwd = join(root, "work");
     mkdirSync(cwd);
-    expect(locateLighthouse({ explicitPath: null, cwd, pathEnv: bin, platform: "linux" })).toBe(
-      entry,
-    );
+    expect(
+      locateLighthouse({
+        explicitPath: null,
+        cwd,
+        pathEnv: [join(root, "other"), bin].join(delimiter),
+        platform,
+      }),
+    ).toBe(entry);
   });
 
   test("follows a lighthouse symlink that ends in cli/index.js", (ctx) => {
@@ -127,9 +139,14 @@ describe("locateLighthouse", () => {
     }
     const cwd = join(root, "work");
     mkdirSync(cwd);
-    expect(locateLighthouse({ explicitPath: null, cwd, pathEnv: bin, platform: "linux" })).toBe(
-      entry,
-    );
+    expect(
+      locateLighthouse({
+        explicitPath: null,
+        cwd,
+        pathEnv: [join(root, "other"), bin].join(delimiter),
+        platform,
+      }),
+    ).toBe(entry);
   });
 
   test("a PATH folder without a lighthouse executable is ignored", () => {
@@ -139,8 +156,24 @@ describe("locateLighthouse", () => {
     const cwd = join(root, "work");
     mkdirSync(cwd);
     expect(
-      locateLighthouse({ explicitPath: null, cwd, pathEnv: bin, platform: "linux" }),
+      locateLighthouse({
+        explicitPath: null,
+        cwd,
+        pathEnv: [join(root, "other"), bin].join(delimiter),
+        platform,
+      }),
     ).toBeNull();
+  });
+
+  test("a PATH is split on the delimiter of the platform it is given", () => {
+    const root = tempDir();
+    const bin = join(root, "npm");
+    touch(join(bin, "lighthouse.cmd"), "@echo off\n");
+    const entry = touch(join(bin, ...ENTRY));
+    const cwd = join(root, "work");
+    mkdirSync(cwd);
+    const pathEnv = [join(root, "other"), "", bin].join(";");
+    expect(locateLighthouse({ explicitPath: null, cwd, pathEnv, platform: "win32" })).toBe(entry);
   });
 
   test("gives null when nothing is installed", () => {
@@ -208,6 +241,13 @@ describe("parseLighthouseResult", () => {
       metrics: NULL_METRICS,
       error: null,
     });
+  });
+
+  test.each([-0.1, 1.01, 500])("a score outside 0 to 1 becomes null: %s", (score) => {
+    const raw = { categories: { performance: { score }, seo: { score: 0.5 } } };
+    const parsed = parseLighthouseResult(raw, "u").page.scores;
+    expect(parsed.performance).toBeNull();
+    expect(parsed.seo).toBe(50);
   });
 
   test("a runtime error becomes the page error and the scores stay null", () => {
@@ -334,6 +374,46 @@ describe("createProcessRunner", () => {
     expect(result.error).toContain("no chrome here");
   });
 
+  test("a silent non-zero exit gives a fixed message with no command line or local path", async () => {
+    const entry = fakeLighthouse(`process.exit(1);\n`);
+    const result = await createProcessRunner(entry)("https://example.com/");
+    expect(result).toEqual({ ok: false, error: "Lighthouse exited with code 1." });
+  });
+
+  test("a missing entry file never puts its path in the error", async () => {
+    const missing = join(tempDir(), "cli", "index.js");
+    const result = await createProcessRunner(missing)("https://example.com/");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).not.toContain(missing);
+    expect(result.error).not.toContain(process.execPath);
+    expect(result.error).not.toContain("example.com");
+  });
+
+  test.each([
+    ["the entry path", `process.argv[1]`],
+    ["the node path", `process.execPath`],
+    ["the home folder", JSON.stringify(homedir())],
+  ])("a stderr line that names %s is replaced by the fixed message", async (_name, expr) => {
+    const entry = fakeLighthouse(
+      `console.error("failed in " + ${expr} + " badly"); process.exit(3);\n`,
+    );
+    const result = await createProcessRunner(entry)("https://example.com/");
+    expect(result).toEqual({ ok: false, error: "Lighthouse exited with code 3." });
+  });
+
+  test("only the first non-empty stderr line is used, capped at 200 characters", async () => {
+    const first = fakeLighthouse(
+      `console.error("\\n\\nfirst line\\nsecond line"); process.exit(1);\n`,
+    );
+    const one = await createProcessRunner(first)("https://example.com/");
+    expect(one).toEqual({ ok: false, error: "first line" });
+
+    const long = fakeLighthouse(`console.error("x".repeat(500)); process.exit(1);\n`);
+    const two = await createProcessRunner(long)("https://example.com/");
+    expect(two).toEqual({ ok: false, error: "x".repeat(200) });
+  });
+
   test("output that is not JSON is a failure", async () => {
     const entry = fakeLighthouse(`console.log("not json");\n`);
     const result = await createProcessRunner(entry)("https://example.com/");
@@ -429,6 +509,26 @@ describe("main with --lighthouse", () => {
     await main(args(site.url("/")), h.io, deps);
     expect(called).toBe(false);
     expect((JSON.parse(h.out()) as { lighthouse: unknown }).lighthouse).toBeNull();
+  });
+
+  test("a found entry is run as a child process and its result lands in the report", async () => {
+    site = await startSite(cleanSite());
+    const pkg = join(tempDir(), "lighthouse");
+    touch(
+      join(pkg, "cli", "index.js"),
+      `console.log(JSON.stringify({ lighthouseVersion: "0.0.0-test", categories: { performance: { score: 0.9 } } }));\n`,
+    );
+    const h = harness();
+    const argv = [...args(site.url("/")), "--lighthouse", "--lighthouse-path", pkg];
+    expect(await main([...argv, "--fail-on", "never"], h.io)).toBe(0);
+    const parsed = JSON.parse(h.out()) as {
+      lighthouse: { status: string; version: string; pages: { scores: { performance: number } }[] };
+    };
+    expect(parsed.lighthouse.status).toBe("ok");
+    expect(parsed.lighthouse.version).toBe("0.0.0-test");
+    expect(parsed.lighthouse.pages).toHaveLength(1);
+    expect(parsed.lighthouse.pages[0]?.scores.performance).toBe(90);
+    expect(h.err()).toBe("");
   });
 
   test("--lighthouse-path to a missing folder gives a not-found section and the install hint", async () => {

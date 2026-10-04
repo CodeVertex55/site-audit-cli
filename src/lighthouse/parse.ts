@@ -14,7 +14,7 @@ function finiteNumber(value: unknown): number | null {
 
 function score(categories: Dict | null, key: string): number | null {
   const value = finiteNumber(asDict(categories?.[key])?.score);
-  return value === null ? null : Math.round(value * 100);
+  return value === null || value < 0 || value > 1 ? null : Math.round(value * 100);
 }
 
 function metric(audits: Dict | null, key: string): number | null {

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
 import type { LighthousePage, LighthouseSection } from "../types.js";
 import { parseLighthouseResult } from "./parse.js";
 
@@ -14,7 +15,7 @@ export const LIGHTHOUSE_NOT_FOUND_NOTE =
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_BUFFER = 64 * 1024 * 1024;
-const MESSAGE_MAX = 300;
+const MESSAGE_MAX = 200;
 
 function firstLine(text: string): string {
   return (
@@ -23,6 +24,42 @@ function firstLine(text: string): string {
       .map((line) => line.trim())
       .find((line) => line !== "") ?? ""
   );
+}
+
+function slashed(text: string): string {
+  return text.replace(/\\/g, "/").toLowerCase();
+}
+
+/** True when the text names a local path the report must not carry. */
+function revealsLocalPath(text: string, entry: string): boolean {
+  const haystack = slashed(text);
+  return [entry, process.execPath, homedir()].some((path) => {
+    const needle = slashed(path);
+    return needle !== "" && haystack.includes(needle);
+  });
+}
+
+/**
+ * The failure text for a child that did not exit cleanly. Built from fixed strings and, at most,
+ * the first line of stderr when that line names no local path; never from the command line.
+ */
+function failureText(
+  error: { killed?: boolean; code?: unknown },
+  stderr: string,
+  entry: string,
+  timeoutMs: number,
+): string {
+  if (error.killed === true) {
+    return `Lighthouse timed out after ${Math.round(timeoutMs / 1000)} seconds.`;
+  }
+  if (typeof error.code !== "number") {
+    return error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+      ? "Lighthouse output was too large."
+      : "Lighthouse could not be started.";
+  }
+  const fixed = `Lighthouse exited with code ${error.code}.`;
+  const line = firstLine(stderr);
+  return line === "" || revealsLocalPath(line, entry) ? fixed : line.slice(0, MESSAGE_MAX);
 }
 
 /**
@@ -48,10 +85,7 @@ export function createProcessRunner(
         { maxBuffer: MAX_BUFFER, timeout: timeoutMs, windowsHide: true, encoding: "utf8" },
         (error, stdout, stderr) => {
           if (error !== null) {
-            const reason = error.killed
-              ? `Lighthouse timed out after ${Math.round(timeoutMs / 1000)} seconds.`
-              : firstLine(stderr) || error.message;
-            resolve({ ok: false, error: reason.slice(0, MESSAGE_MAX) });
+            resolve({ ok: false, error: failureText(error, stderr, entry, timeoutMs) });
             return;
           }
           try {
