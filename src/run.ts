@@ -3,6 +3,8 @@ import { HELP_TEXT, parseCli, type CliOptions, type Format } from "./args.js";
 import { A11Y_NOTICE } from "./checks/accessibility.js";
 import { CHECKS } from "./checks/registry.js";
 import { UnreachableError, UsageError } from "./errors.js";
+import { locateLighthouse } from "./lighthouse/locate.js";
+import { createProcessRunner, LIGHTHOUSE_NOT_FOUND_NOTE, runLighthouse } from "./lighthouse/run.js";
 import { renderHtml } from "./report/html.js";
 import { renderJson } from "./report/json.js";
 import { renderMarkdown } from "./report/markdown.js";
@@ -117,7 +119,8 @@ function render(result: AuditResult, format: Format, color: boolean): string {
 
 /**
  * Runs the command line and returns the exit code: 0 and 1 from the findings, 2 for a usage
- * error, 3 when the start URL could not be audited. Anything unexpected is thrown.
+ * error or an unwritable `--output` path, 3 when the start URL could not be audited. Anything
+ * unexpected is thrown.
  */
 export async function main(argv: string[], io: Io, deps: AuditDeps = {}): Promise<number> {
   let command;
@@ -153,9 +156,22 @@ export async function main(argv: string[], io: Io, deps: AuditDeps = {}): Promis
         }
       };
 
+  const auditDeps: AuditDeps = { ...deps, onProgress: progress };
+  if (options.lighthouse && deps.lighthouse === undefined) {
+    const entry = locateLighthouse({
+      explicitPath: options.lighthousePath,
+      cwd: process.cwd(),
+      pathEnv: io.env.PATH ?? io.env.Path ?? "",
+      platform: process.platform,
+    });
+    if (entry === null) io.stderr(`site-audit: ${LIGHTHOUSE_NOT_FOUND_NOTE}\n`);
+    auditDeps.lighthouse = (urls) =>
+      runLighthouse(urls, entry === null ? null : createProcessRunner(entry));
+  }
+
   let result: AuditResult;
   try {
-    result = await audit(options, { ...deps, onProgress: progress });
+    result = await audit(options, auditDeps);
   } catch (error) {
     if (!(error instanceof UnreachableError)) throw error;
     io.stderr(`site-audit: ${clean(error.message, MESSAGE_MAX)}\n`);
@@ -166,7 +182,13 @@ export async function main(argv: string[], io: Io, deps: AuditDeps = {}): Promis
   if (cli.output === null) {
     io.stdout(report);
   } else {
-    await io.writeFile(cli.output, report);
+    try {
+      await io.writeFile(cli.output, report);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      io.stderr(`site-audit: could not write ${clean(cli.output)}: ${clean(reason)}\n`);
+      return 2;
+    }
     io.stderr(`Report written to ${cli.output}\n`);
   }
   return exitCodeFor(result, cli.failOn);

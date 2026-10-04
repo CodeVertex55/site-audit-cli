@@ -164,6 +164,28 @@ describe("main: output", () => {
     expect((JSON.parse(written ?? "") as AuditResult).schemaVersion).toBe(1);
   });
 
+  test("an unwritable --output path returns 2 with a cleaned message and nothing on stdout", async () => {
+    const s = await clean();
+    const h = harness();
+    const io: Io = {
+      ...h.io,
+      writeFile: () => Promise.reject(new Error("EACCES: permission denied\u001b[31m")),
+    };
+    const args = [
+      s.url("/"),
+      "--delay",
+      "0",
+      "--quiet",
+      "--max-pages",
+      "1",
+      "--output",
+      "bad\u0007/r.json",
+    ];
+    expect(await main(args, io)).toBe(2);
+    expect(h.err()).toBe("site-audit: could not write bad/r.json: EACCES: permission denied\n");
+    expect(h.out()).toBe("");
+  });
+
   test("progress goes to stderr unless --quiet", async () => {
     const s = await clean();
     const loud = harness();
