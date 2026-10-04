@@ -19,6 +19,9 @@ export type CliCommand =
   | { kind: "help" }
   | { kind: "version" };
 
+// The default user agent is longer than a help line, so it is split at its space.
+const [AGENT_NAME = "", ...AGENT_REST] = DEFAULT_OPTIONS.userAgent.split(" ");
+
 export const HELP_TEXT = `Usage:
   site-audit <url> [options]
   site-audit checks [--format text|markdown]
@@ -43,7 +46,8 @@ Options:
   --ignore-robots                   Do not apply robots.txt. For sites you own or have
                                     permission to audit. The report shows a notice.
   --user-agent STRING               Request header. robots.txt matching uses the token
-                                    site-audit-cli. Default: ${DEFAULT_OPTIONS.userAgent}
+                                    site-audit-cli. Default: ${AGENT_NAME}
+                                    ${AGENT_REST.join(" ")}
   --only GROUP[,GROUP]              Limit to groups: seo, health, performance, accessibility.
                                     Default: all groups.
   --lighthouse                      Add Lighthouse lab results for the start URL.

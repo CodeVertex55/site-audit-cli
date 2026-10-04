@@ -228,6 +228,21 @@ describe("robots.txt", () => {
     expect(ctx.limits.blockedByRobots).toEqual([site.url("/secret/x")]);
   });
 
+  test("a rule cut mid-line at 512 KB is dropped, not read as a shorter rule", async () => {
+    const head = "User-agent: *\n";
+    const partial = "Disallow: /";
+    const filler = 512 * 1024 - head.length - partial.length;
+    const comment = `#${"x".repeat(filler - 2)}\n`;
+    const site = await start({
+      "/robots.txt": { headers: ROBOTS_TEXT, body: `${head}${comment}Disallow: /private\n` },
+      "/": { body: page({ body: linkTo("/ok") }) },
+      "/ok": { body: page() },
+    });
+    const ctx = await crawlSite(opts(site));
+    expect(site.hits("/ok")).toBe(1);
+    expect(ctx.robots.disallowAll).toBe(false);
+  });
+
   test("robots.txt is read up to 512 KB, later rules are ignored and a note says so", async () => {
     const padding = "# padding line\n".repeat(Math.ceil((512 * 1024) / 15));
     const site = await start({
@@ -1475,19 +1490,110 @@ describe("external hosts", () => {
     expect(ctx.assets[0]).toMatchObject({ thirdParty: true, measured: false });
   });
 
+  describe("URLs on the audited host under another scheme", () => {
+    const robots = "User-agent: *\nCrawl-delay: 5\nDisallow: /private/\n";
+    const routes: Record<string, FakeRoute> = {
+      "https://site.example/robots.txt": { body: robots },
+      "https://site.example/": {
+        body: page({
+          body: [
+            '<img src="http://site.example/private/a.png" alt="a">',
+            '<img src="http://site.example/ok.png" alt="b">',
+            '<img src="http://site.example/moved.png" alt="c">',
+            '<a href="http://site.example/private/x">x</a>',
+          ].join(""),
+        }),
+      },
+      "http://site.example/ok.png": { body: "png" },
+      "http://site.example/moved.png": {
+        status: 301,
+        location: "https://site.example/private/b.png",
+      },
+    };
+
+    test("follow the audited site's robots.txt and its pace", async () => {
+      const clock = instantClock();
+      const web = fakeWeb(routes);
+      const log: { at: number; request: string }[] = [];
+      const ctx = await crawlSite(
+        {
+          ...DEFAULT_OPTIONS,
+          startUrl: "https://site.example/",
+          delayMs: 0,
+          timeoutMs: 2000,
+          checkExternal: true,
+          // One at a time, so the instant clock's reading at each request is its start time.
+          concurrency: 1,
+        },
+        {
+          clock,
+          fetchImpl: (input, init) => {
+            log.push({ at: clock.now(), request: `${init?.method ?? "GET"} ${rawUrl(input)}` });
+            return web.fetchImpl(input, init);
+          },
+        },
+      );
+      const requests = log.map((entry) => entry.request);
+      expect(requests.filter((r) => r.includes("/private/"))).toEqual([]);
+      expect(requests.some((r) => r.endsWith(" http://site.example/ok.png"))).toBe(true);
+      const byUrl = new Map(ctx.assets.map((asset) => [asset.url, asset]));
+      expect(byUrl.get("http://site.example/private/a.png")?.measured).toBe(false);
+      expect(byUrl.get("http://site.example/moved.png")?.measured).toBe(false);
+      expect(byUrl.get("http://site.example/ok.png")?.measured).toBe(true);
+      expect(ctx.limits.blockedByRobots).toContain("http://site.example/private/a.png");
+      expect(ctx.external).toEqual([
+        {
+          url: "http://site.example/private/x",
+          status: null,
+          failure: "blocked-by-robots",
+          usedBy: ["https://site.example/"],
+        },
+      ]);
+      const ext = runChecks(ctx, ["health"]).find((c) => c.id === "HEALTH-EXT-060");
+      expect(ext?.findings).toEqual([]);
+      const times = log
+        .filter((entry) => new URL(entry.request.split(" ")[1] ?? "").hostname === "site.example")
+        .map((entry) => entry.at);
+      for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(5000);
+    });
+
+    test("with --ignore-robots they are requested, still at the site's pace", async () => {
+      const web = fakeWeb(routes);
+      const ctx = await crawlSite(
+        {
+          ...DEFAULT_OPTIONS,
+          startUrl: "https://site.example/",
+          delayMs: 0,
+          timeoutMs: 2000,
+          checkExternal: true,
+          ignoreRobots: true,
+        },
+        { clock: instantClock(), fetchImpl: web.fetchImpl },
+      );
+      expect(web.seen).toContain("HEAD http://site.example/private/a.png");
+      expect(web.seen).toContain("HEAD http://site.example/private/x");
+      expect(ctx.limits.blockedByRobots).toEqual([]);
+    });
+  });
+
   test("other hosts are held to one request at a time", async () => {
-    const other = await start({
-      "/a": { body: page(), delayMs: 200 },
-      "/b": { body: page(), delayMs: 200 },
-      "/c": { body: page(), delayMs: 200 },
+    // A different port on 127.0.0.1 is the audited hostname, so the other host is a stand-in
+    // that takes 200 ms to answer.
+    const links = ["/a", "/b", "/c"].map((p) => `https://other.example${p}`);
+    const site = await start({ "/": { body: page({ body: linkTo(...links) }) } });
+    const real = globalThis.fetch;
+    const starts: number[] = [];
+    await crawlSite(opts(site, { checkExternal: true, concurrency: 4 }), {
+      fetchImpl: (input, init) => {
+        if (rawUrl(input).startsWith(site.origin)) return real(input, init);
+        starts.push(Date.now());
+        return new Promise((resolve) => {
+          setTimeout(() => resolve(new Response(null, { status: 200 })), 200);
+        });
+      },
     });
-    const site = await start({
-      "/": { body: page({ body: linkTo(other.url("/a"), other.url("/b"), other.url("/c")) }) },
-    });
-    await crawlSite(opts(site, { checkExternal: true, concurrency: 4 }));
-    const times = other.log.map((r) => r.at);
-    expect(times).toHaveLength(3);
-    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(150);
+    expect(starts).toHaveLength(3);
+    for (const gap of gaps(starts)) expect(gap).toBeGreaterThanOrEqual(150);
   });
 });
 
@@ -1639,6 +1745,24 @@ describe("origin probes", () => {
       expect(web.seen.filter((s) => s === "GET http://site.example/")).toHaveLength(1);
     });
 
+    test("the http variant redirecting to https on a different site gives null", async () => {
+      const run = crawlFake({
+        "http://site.example/": { status: 301, location: "https://elsewhere.example/" },
+      });
+      expect((await run).probes.httpRedirectsToHttps).toBeNull();
+      expect(run.seen.filter((s) => s.includes("elsewhere.example"))).toEqual([]);
+    });
+
+    test("an https origin on a non-default port skips the http variant probe", async () => {
+      const web = fakeWeb({ "https://site.example:8443/": { body: home } });
+      const ctx = await crawlSite(
+        { ...DEFAULT_OPTIONS, startUrl: "https://site.example:8443/", delayMs: 0, timeoutMs: 2000 },
+        { fetchImpl: web.fetchImpl },
+      );
+      expect(ctx.probes.httpRedirectsToHttps).toBeNull();
+      expect(web.seen.filter((s) => s.includes("http://"))).toEqual([]);
+    });
+
     test("the www counterpart redirecting to the audit origin is true", async () => {
       const ctx = await crawlFake({
         "https://www.site.example/": { status: 301, location: "https://site.example/" },
@@ -1725,6 +1849,27 @@ describe("throttling and progress", () => {
     expect(events.filter((e) => e.kind === "asset")).toHaveLength(1);
     expect(events.filter((e) => e.kind === "external")).toHaveLength(1);
     expect(events.every((e) => e.done >= 0)).toBe(true);
+  });
+
+  test("a Crawl-delay that governs the pace is noted, and one not above --delay is not", async () => {
+    const site = await start({
+      "/robots.txt": { headers: ROBOTS_TEXT, body: "User-agent: *\nCrawl-delay: 2\n" },
+      "/": { body: page({ head: '<link rel="icon" href="data:,">' }) },
+    });
+    const notesFor = async (delayMs: number): Promise<string[]> => {
+      const notes: string[] = [];
+      await crawlSite(opts(site, { delayMs }), {
+        clock: instantClock(),
+        onProgress: (e) => {
+          if (e.kind === "note" && e.message !== undefined) notes.push(e.message);
+        },
+      });
+      return notes;
+    };
+    const note = "robots.txt asks for 2 seconds between requests, so this run will take longer.";
+    expect(await notesFor(0)).toContain(note);
+    expect(await notesFor(2000)).not.toContain(note);
+    expect(await notesFor(3000)).toEqual([]);
   });
 
   test("a robots.txt crawl-delay above the cap is clamped and noted", async () => {

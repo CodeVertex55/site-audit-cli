@@ -26,6 +26,13 @@ export type AuditDeps = CrawlDeps & {
   lighthouse?: (urls: string[]) => Promise<LighthouseSection>;
 };
 
+/** The robots.txt Crawl-delay when it sets the pace (it is larger than --delay), else null. */
+function governingCrawlDelay(ctx: SiteContext): number | null {
+  const delay = ctx.robots.crawlDelay;
+  if (ctx.options.ignoreRobots || delay === null) return null;
+  return delay > ctx.options.delayMs ? delay : null;
+}
+
 /** The scope block every report opens with, taken from the crawl and the options. */
 export function buildScope(ctx: SiteContext): Scope {
   return {
@@ -41,7 +48,7 @@ export function buildScope(ctx: SiteContext): Scope {
     checkExternal: ctx.options.checkExternal,
     assetsNotMeasured: ctx.limits.assetsNotMeasured,
     delayRaised: ctx.limits.delayRaised,
-    crawlDelayMs: ctx.options.ignoreRobots ? null : ctx.robots.crawlDelay,
+    crawlDelayMs: governingCrawlDelay(ctx),
     groups: [...(ctx.options.only ?? GROUPS)],
     notSeen: [...NOT_SEEN],
   };

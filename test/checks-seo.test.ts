@@ -423,6 +423,9 @@ describe("robots checks", () => {
   test("SEO-ROBOTS-081 fires when everything is disallowed and not otherwise", () => {
     expect(ids(withRobots({ disallowAll: true }))).toContain("SEO-ROBOTS-081");
     expect(ids(withRobots({ disallowAll: false }))).not.toContain("SEO-ROBOTS-081");
+    expect(only("SEO-ROBOTS-081", withRobots({})).why).toBe(
+      "It tells search engine crawlers not to fetch any page of the site.",
+    );
   });
 
   test("SEO-ROBOTS-082 fires on a server error and not on 200", () => {

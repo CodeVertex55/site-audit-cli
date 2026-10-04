@@ -87,7 +87,7 @@ describe("link and redirect checks", () => {
       [
         down.url,
         "info",
-        "Could not verify (status 503). The site was limiting requests during the audit.",
+        "Could not verify (status 503). The site was not available for this request during the audit.",
       ],
     ]);
     expect(out.findings[0]?.evidence).toEqual([`${SITE}/`]);
@@ -379,7 +379,9 @@ describe("security header checks", () => {
     const out = only("HEALTH-HDR-050", withHeaders({}, [bare("/a")]));
     expect(out.findings[0]?.detail).toContain("1 other page also lacks it");
     const alone = only("HEALTH-HDR-050", withHeaders({}));
-    expect(alone.findings[0]?.detail).toContain("0 other pages also lack it");
+    expect(alone.findings[0]?.detail).toBe(
+      "The start page has no Strict-Transport-Security header.",
+    );
   });
 
   test("HEALTH-HDR-050 is not applicable on an HTTP origin, the others still run", () => {

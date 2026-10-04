@@ -233,6 +233,11 @@ describe("buildScope", () => {
     const base = makeContext();
     const ctx = { ...base, robots: { ...base.robots, crawlDelay: 1500 } };
     expect(buildScope(ctx).crawlDelayMs).toBe(1500);
+    // A Crawl-delay that is not larger than --delay does not govern the pace, so it is not shown.
+    const smaller = { ...base, robots: { ...base.robots, crawlDelay: 500 } };
+    expect(buildScope(smaller).crawlDelayMs).toBeNull();
+    const equal = { ...base, robots: { ...base.robots, crawlDelay: base.options.delayMs } };
+    expect(buildScope(equal).crawlDelayMs).toBeNull();
     const ignored = {
       ...ctx,
       robots: { ...ctx.robots, ignored: true },

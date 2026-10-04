@@ -190,6 +190,11 @@ describe("parseCli", () => {
     expect(HELP_TEXT).toContain("site-audit checks");
   });
 
+  test("no help line is wider than 95 characters", () => {
+    const wide = HELP_TEXT.split("\n").filter((line) => line.length > 95);
+    expect(wide).toEqual([]);
+  });
+
   test("help text states the defaults, the URL schemes and what exit code 2 covers", () => {
     const flat = HELP_TEXT.replace(/\s+/g, " ");
     expect(flat).toContain("when NO_COLOR is set and not empty");

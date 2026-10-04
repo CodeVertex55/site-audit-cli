@@ -139,11 +139,14 @@ function headerCheck(rule: HeaderRule): CheckSpec {
     run: (ctx, emit) => {
       const start = startPage(ctx);
       if (start === undefined || rule.has(start.headers)) return [];
-      const others = htmlPages(ctx).filter((p) => p !== start && !rule.has(p.headers)).length;
+      const otherPages = htmlPages(ctx).filter((p) => p !== start);
+      const first = `The start page has no ${rule.header} header.`;
+      if (otherPages.length === 0) return [emit(null, first)];
+      const others = otherPages.filter((p) => !rule.has(p.headers)).length;
       return [
         emit(
           null,
-          `The start page has no ${rule.header} header. ${others} other ${plural(others, "page also lacks it", "pages also lack it")}.`,
+          `${first} ${others} other ${plural(others, "page also lacks it", "pages also lack it")}.`,
         ),
       ];
     },
@@ -171,7 +174,9 @@ export const HEALTH_CHECKS: CheckSpec[] = [
             return {
               ...emit(
                 p.url,
-                `Could not verify (status ${p.status ?? "unknown"}). The site was limiting requests during the audit.`,
+                p.status === 503
+                  ? "Could not verify (status 503). The site was not available for this request during the audit."
+                  : `Could not verify (status ${p.status ?? "unknown"}). The site was limiting requests during the audit.`,
                 p.inlinks,
               ),
               severity: "info",
@@ -369,6 +374,8 @@ export const HEALTH_CHECKS: CheckSpec[] = [
     applies: (ctx) => ctx.external !== null,
     run: (ctx, emit) =>
       (ctx.external ?? []).flatMap((e): Finding[] => {
+        // Not requested because the audited site's robots.txt disallows it, so not checked.
+        if (e.failure === "blocked-by-robots") return [];
         if (e.failure !== null) {
           return [emit(e.url, `The request failed (${e.failure}).`, e.usedBy)];
         }

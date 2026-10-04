@@ -97,6 +97,27 @@ describe("parseSitemap", () => {
     },
   );
 
+  test("a prefixed urlset is read by local name, and extension locs are still ignored", () => {
+    const xml = `<sm:urlset xmlns:sm="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="x">
+  <sm:url><sm:loc>https://example.com/a</sm:loc><image:image><image:loc>https://example.com/i.png</image:loc></image:image></sm:url>
+  <sm:url><image:loc>https://example.com/j.png</image:loc></sm:url>
+  <sm:url><loc>https://example.com/unprefixed</loc></sm:url>
+</sm:urlset>`;
+    expect(parseSitemap(xml)).toEqual({ kind: "urlset", urls: ["https://example.com/a"] });
+  });
+
+  test("a prefixed sitemap index is read by local name", () => {
+    const xml = `<sm:sitemapindex xmlns:sm="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sm:sitemap><sm:loc>https://example.com/s1.xml</sm:loc></sm:sitemap>
+</sm:sitemapindex>`;
+    expect(parseSitemap(xml)).toEqual({ kind: "index", urls: ["https://example.com/s1.xml"] });
+  });
+
+  test("an unprefixed urlset ignores a prefixed loc inside url", () => {
+    const xml = `<urlset ${NS}><url><image:loc>https://example.com/i.png</image:loc><loc>https://example.com/a</loc></url></urlset>`;
+    expect(parseSitemap(xml).urls).toEqual(["https://example.com/a"]);
+  });
+
   test("text of a malformed document does not throw", () => {
     expect(() => parseSitemap(`<urlset><url><loc>https://example.com/a</url>`)).not.toThrow();
   });

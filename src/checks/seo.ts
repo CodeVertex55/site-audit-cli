@@ -461,7 +461,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     severity: "error",
     scope: "site",
     title: "robots.txt blocks the whole site",
-    why: "A rule that disallows everything for all crawlers keeps the site out of search results.",
+    why: "It tells search engine crawlers not to fetch any page of the site.",
     fix: "Remove the Disallow: / rule for the all-crawlers group, unless the site is meant to stay private.",
     heuristic: null,
     applies: () => true,

@@ -17,6 +17,7 @@ import {
   disallowsEverything,
   isAllowed,
   parseRobots,
+  selectGroup,
   type RobotsFile,
 } from "./robots.js";
 import { parseSitemap } from "./sitemap.js";
@@ -57,6 +58,8 @@ type RobotsState = {
   /** The Crawl-delay for this tool in milliseconds, already clamped; null when none. */
   delayMs: number | null;
   clamped: boolean;
+  /** The Crawl-delay robots.txt asks for, in milliseconds, before the clamp; null when none. */
+  requestedMs: number | null;
   /** Set when robots.txt could not be read: a network failure or a 5xx answer. */
   unreadable: string | null;
 };
@@ -127,40 +130,60 @@ type Net = {
   make: (fetchImpl: typeof fetch, gate: HostGate) => Fetcher;
 };
 
+/** The hostname part of a `host` or `host:port` value. */
+function hostnameOfHost(host: string): string {
+  try {
+    return new URL(`http://${host}`).hostname;
+  } catch {
+    return host;
+  }
+}
+
 /**
  * Sends the audit host through the audit gate and every other host through the one-at-a-time
- * gate, so a redirect to a sibling host is paced like any other host.
+ * gate, so a redirect to a sibling host is paced like any other host. With `byHostname`, any
+ * scheme or port of the audit hostname shares the audit host's slot in the audit gate.
  */
 class RoutedGate extends HostGate {
   private readonly primary: HostGate;
   private readonly secondary: HostGate;
   private readonly primaryHost: string;
+  private readonly byHostname: boolean;
 
-  constructor(primary: HostGate, secondary: HostGate, primaryHost: string) {
+  constructor(primary: HostGate, secondary: HostGate, primaryHost: string, byHostname = false) {
     super({ delayMs: 0, concurrency: 1 });
     this.primary = primary;
     this.secondary = secondary;
     this.primaryHost = primaryHost;
+    this.byHostname = byHostname;
   }
 
-  private pick(host: string): HostGate {
-    return host === this.primaryHost ? this.primary : this.secondary;
+  private route(host: string): { gate: HostGate; key: string } {
+    if (host === this.primaryHost) return { gate: this.primary, key: host };
+    if (this.byHostname && hostnameOfHost(host) === hostnameOfHost(this.primaryHost)) {
+      return { gate: this.primary, key: this.primaryHost };
+    }
+    return { gate: this.secondary, key: host };
   }
 
   override acquire(host: string): Promise<() => void> {
-    return this.pick(host).acquire(host);
+    const { gate, key } = this.route(host);
+    return gate.acquire(key);
   }
 
   override setMinDelay(host: string, ms: number): void {
-    this.pick(host).setMinDelay(host, ms);
+    const { gate, key } = this.route(host);
+    gate.setMinDelay(key, ms);
   }
 
   override doubleDelay(host: string): boolean {
-    return this.pick(host).doubleDelay(host);
+    const { gate, key } = this.route(host);
+    return gate.doubleDelay(key);
   }
 
   override delayFor(host: string): number {
-    return this.pick(host).delayFor(host);
+    const { gate, key } = this.route(host);
+    return gate.delayFor(key);
   }
 }
 
@@ -261,6 +284,7 @@ async function loadRobots(
     summary: robotsSummary(movedAway ? lastHopStatus(r) : r.status, false, ignored),
     delayMs: null,
     clamped: false,
+    requestedMs: null,
     unreadable,
   });
   if (movedAway) return none("it redirected to a different site");
@@ -275,7 +299,14 @@ async function loadRobots(
       message: `robots.txt at ${origin} is larger than 512 KB. Rules after the first 512 KB were ignored.`,
     });
   }
-  const file = parseRobots(r.body ?? "");
+  let text = r.body ?? "";
+  if (r.truncated) {
+    // The cut can fall inside a rule, and a shortened rule can mean something else, such as
+    // "Disallow: /private" read as "Disallow: /". The final partial line is dropped.
+    const lineEnd = Math.max(text.lastIndexOf("\n"), text.lastIndexOf("\r"));
+    text = text.slice(0, lineEnd + 1);
+  }
+  const file = parseRobots(text);
   const delay = crawlDelayMs(file, ROBOTS_TOKEN);
   return {
     file,
@@ -291,6 +322,7 @@ async function loadRobots(
     },
     delayMs: delay.ms,
     clamped: delay.clamped,
+    requestedMs: requestedDelayMs(file),
     unreadable: null,
   };
 }
@@ -322,6 +354,20 @@ function enforceRobots(
   }
 }
 
+function requestedDelayMs(file: RobotsFile): number | null {
+  const seconds = selectGroup(file, ROBOTS_TOKEN)?.crawlDelay ?? null;
+  return seconds === null ? null : Math.round(seconds * 1000);
+}
+
+function secondsText(ms: number): string {
+  const seconds = ms / 1000;
+  return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+}
+
+/**
+ * Applies the robots.txt Crawl-delay to the host's gate. When it is larger than --delay, so it
+ * sets the pace, a note says so, and another when it was clamped.
+ */
 function applyCrawlDelay(
   gate: HostGate,
   origin: string,
@@ -331,6 +377,13 @@ function applyCrawlDelay(
 ): void {
   if (options.ignoreRobots || robots.delayMs === null) return;
   gate.setMinDelay(new URL(origin).host, robots.delayMs);
+  if (robots.delayMs > options.delayMs) {
+    say({
+      kind: "note",
+      done: 0,
+      message: `robots.txt asks for ${secondsText(robots.requestedMs ?? robots.delayMs)} between requests, so this run will take longer.`,
+    });
+  }
   if (robots.clamped) {
     say({
       kind: "note",
@@ -803,6 +856,8 @@ type AssetArgs = {
   fetchers: Fetchers;
   assets: AssetRecord[];
   robotsBlocks: (url: string) => boolean;
+  /** True for a URL on the audited hostname, whatever its scheme or port. */
+  onAuditHost: (url: string) => boolean;
   block: (url: string) => void;
   say: Say;
 };
@@ -816,7 +871,10 @@ async function probeAssets(a: AssetArgs): Promise<void> {
   const eligible: AssetRecord[] = [];
   for (const asset of a.assets) {
     if (asset.thirdParty) {
-      if (options.checkExternal) eligible.push(asset);
+      if (!options.checkExternal) continue;
+      // The audited host under another scheme or port follows the audited site's robots.txt.
+      if (a.onAuditHost(asset.url) && a.robotsBlocks(asset.url)) a.block(asset.url);
+      else eligible.push(asset);
     } else if (a.robotsBlocks(asset.url)) {
       a.block(asset.url);
     } else if (!isExcluded(asset.url, options.exclude)) {
@@ -840,20 +898,21 @@ const MAX_VARIANT_REQUESTS = 3;
 /**
  * Whether plain HTTP is upgraded on an HTTPS origin. Requests `http://host/` and follows
  * redirects that stay on the site, at most three requests in all. True when a redirect points
- * at https, false when the chain ends in a 2xx answer over http, and null otherwise: a failure,
- * a 4xx or 5xx answer, a redirect off the site or a longer chain.
+ * at https on the same site, false when the chain ends in a 2xx answer over http, and null
+ * otherwise: a failure, a 4xx or 5xx answer, a redirect off the site or a longer chain. An
+ * origin on a port other than 443 is not probed, since its plain-HTTP port is unknown.
  */
 async function probeHttpVariant(fetcher: Fetcher, origin: string): Promise<boolean | null> {
   const parsed = new URL(origin);
-  if (parsed.protocol !== "https:") return null;
+  if (parsed.protocol !== "https:" || parsed.port !== "") return null;
   let url = `http://${parsed.hostname}/`;
   for (let i = 0; i < MAX_VARIANT_REQUESTS; i += 1) {
     const r = await fetcher.single(url);
     if (r.status === null) return null;
     if (r.status >= 200 && r.status < 300) return false;
     if (r.status < 300 || r.status >= 400 || r.location === null) return null;
-    if (r.location.startsWith("https:")) return true;
     if (!sameSite(r.location, origin)) return null;
+    if (r.location.startsWith("https:")) return true;
     url = r.location;
   }
   return null;
@@ -928,10 +987,16 @@ async function probeLink(
   return fetcher.single(url, "GET");
 }
 
+/**
+ * Checks each unique external link once. A link that `skip` refuses (the audited hostname under
+ * another scheme or port, disallowed by the audited site's robots.txt) is not requested and is
+ * recorded with the failure `blocked-by-robots`.
+ */
 async function probeExternal(
   options: AuditOptions,
   pages: PageRecord[],
   fetcher: Fetcher,
+  skip: (url: string) => boolean,
   say: Say,
 ): Promise<ExternalLink[]> {
   const byUrl = new Map<string, ExternalLink>();
@@ -952,6 +1017,10 @@ async function probeExternal(
   const entries = [...byUrl.values()];
   let done = 0;
   await mapPool(entries, options.concurrency, async (entry) => {
+    if (skip(entry.url)) {
+      entry.failure = "blocked-by-robots";
+      return;
+    }
     const result = await probeLink(fetcher, entry.url);
     entry.status = result.status;
     entry.failure = result.failure;
@@ -1014,10 +1083,26 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     if (isExcluded(url, options.exclude)) return "excluded";
     return robotsBlocks(url) ? "robots" : null;
   };
+  // Other hosts, and the audited hostname under another scheme or port. The latter shares the
+  // audit gate and is held to the audited site's robots.txt before the first request and before
+  // any redirect is followed.
+  const auditHostname = new URL(origin).hostname;
+  const onAuditHost = (url: string): boolean => {
+    try {
+      return new URL(url).hostname === auditHostname;
+    } catch {
+      return false;
+    }
+  };
+  const otherReason = (url: string): BlockReason | null =>
+    onAuditHost(url) && robotsBlocks(url) ? "robots" : null;
   const fetchers: Fetchers = {
     main: build(new RoutedGate(gate, otherGate, new URL(origin).host), baseFetch),
     crawl: build(gate, guardedFetch(baseFetch, reasonFor, blockedAt)),
-    other: build(otherGate, baseFetch),
+    other: build(
+      new RoutedGate(gate, otherGate, new URL(origin).host, true),
+      guardedFetch(baseFetch, otherReason, new Map()),
+    ),
   };
 
   const sitemap = await loadSitemaps(siteOnly(net, origin), origin, robots.summary.sitemaps, say);
@@ -1036,6 +1121,9 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
   computeInlinks(crawl.pages);
 
   const blockedByRobots = crawl.blockedByRobots;
+  const block = (url: string): void => {
+    if (!blockedByRobots.includes(url)) blockedByRobots.push(url);
+  };
   const assets = collectAssets(crawl.pages, origin);
   await probeAssets({
     options,
@@ -1043,14 +1131,23 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     fetchers,
     assets,
     robotsBlocks,
-    block: (url) => {
-      if (!blockedByRobots.includes(url)) blockedByRobots.push(url);
-    },
+    onAuditHost,
+    block,
     say,
   });
   const probes = await probeOrigin(origin, fetchers, crawl.pages, robotsBlocks);
   const external = options.checkExternal
-    ? await probeExternal(options, crawl.pages, fetchers.other, say)
+    ? await probeExternal(
+        options,
+        crawl.pages,
+        fetchers.other,
+        (url) => {
+          if (!onAuditHost(url) || !robotsBlocks(url)) return false;
+          block(url);
+          return true;
+        },
+        say,
+      )
     : null;
 
   return {
