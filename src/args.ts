@@ -53,7 +53,7 @@ Options:
   --no-color                        Disable colour. Colour is also off when stdout is not a
                                     terminal, when NO_COLOR is set and not empty, and when
                                     --output is used.
-  --quiet                           No progress on stderr.
+  --quiet                           No progress or notes on stderr.
   --version                         Print the version.
   --help                            Print this help.
 

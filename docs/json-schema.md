@@ -124,12 +124,12 @@ type LighthousePage = {
 ### scope
 
 - `startUrl`: the start URL you gave, normalised.
-- `origin`: the origin that was audited. It differs from the origin you typed when the start URL redirected to another origin once.
+- `origin`: the origin that was audited. It differs from the origin you typed when the start URL redirected to another origin: up to three moves within the same site, or one move to a different site.
 - `originNote`: a sentence saying so when the origin moved, otherwise `null`.
-- `pagesCrawled`: the number of pages crawled, counted against `maxPages`. Responses that are not HTML are recorded but not counted.
+- `pagesCrawled`: the number of pages crawled, counted against `maxPages`. Responses that are not HTML are recorded but not counted here. They have a separate cap of the same size.
 - `maxPages`, `maxDepth`: the limits in force.
-- `uncrawled`: how many discovered URLs were left in the queue when the limit was reached.
-- `blockedByRobots`: URLs that were not fetched because robots.txt disallows them.
+- `uncrawled`: how many discovered URLs were left in the queue when the page cap or the cap on other files was reached.
+- `blockedByRobots`: URLs that were not fetched because robots.txt disallows them. The JSON report is the only format that lists them. The other formats show the count.
 - `ignoreRobots`: true when `--ignore-robots` was used.
 - `checkExternal`: true when `--check-external` was used.
 - `assetsNotMeasured`: how many assets have no measured size, because they are third party without `--check-external`, over the `--max-assets` cap, blocked by robots.txt or `--exclude`, or did not answer with a size.
@@ -155,7 +155,7 @@ type LighthousePage = {
 
 - `id`: the check id, for example `SEO-TITLE-001`. The ids are listed in [checks.md](checks.md).
 - `group`, `severity`, `title`, `why`, `fix`: the same values as in the check reference.
-- `status`: `pass` when the check found nothing, `fail` when it has findings, `not-applicable` when it could not run, for example a sitemap check on a site where no HTML page loaded.
+- `status`: `pass` when the check found nothing, `fail` when it has findings, `not-applicable` when it could not run, for example a sitemap check when no sitemap file was read, or an asset check when no asset was measured.
 - `findings`: what the check found. Empty unless the status is `fail`.
 
 ### findings
@@ -169,7 +169,7 @@ type LighthousePage = {
 ### pages
 
 - `url`: the normalised URL the crawler requested.
-- `status`: the HTTP status of the final response, or `null` when the fetch failed or was blocked.
+- `status`: the HTTP status of the final response, or `null` when the fetch failed. When a redirect was not followed because its target is disallowed by robots.txt, matches `--exclude` or leaves the audit origin, it is the status of that redirect.
 - `responseMs`: milliseconds from sending the request to receiving the response headers. It is one measurement from the machine that ran the audit.
 - `counts`: how many findings of each severity name this page.
 
