@@ -45,7 +45,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "docs:checks": "tsx scripts/gen-checks-doc.ts"
+    "docs:checks": "tsx scripts/gen-checks-doc.ts",
+    "examples": "tsx scripts/gen-examples.ts"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

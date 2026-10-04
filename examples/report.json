@@ -1,0 +1,1410 @@
+{
+  "schemaVersion": 1,
+  "tool": {
+    "name": "site-audit-cli",
+    "version": "1.0.0"
+  },
+  "startedAt": "2026-10-04T09:00:00.000Z",
+  "finishedAt": "2026-10-04T09:00:12.000Z",
+  "scope": {
+    "startUrl": "http://127.0.0.1:4173/",
+    "origin": "http://127.0.0.1:4173",
+    "originNote": null,
+    "pagesCrawled": 12,
+    "maxPages": 50,
+    "maxDepth": 3,
+    "uncrawled": 0,
+    "blockedByRobots": [],
+    "ignoreRobots": false,
+    "checkExternal": false,
+    "assetsNotMeasured": 0,
+    "delayRaised": false,
+    "groups": [
+      "seo",
+      "health",
+      "performance",
+      "accessibility"
+    ],
+    "notSeen": [
+      "Content rendered by JavaScript.",
+      "Pages behind a login.",
+      "Real-user performance.",
+      "Anything beyond the page limit."
+    ]
+  },
+  "summary": {
+    "byGroup": {
+      "seo": {
+        "error": 2,
+        "warning": 14,
+        "info": 20
+      },
+      "health": {
+        "error": 2,
+        "warning": 4,
+        "info": 4
+      },
+      "performance": {
+        "error": 1,
+        "warning": 6,
+        "info": 1
+      },
+      "accessibility": {
+        "error": 0,
+        "warning": 2,
+        "info": 2
+      }
+    },
+    "checksRun": 66,
+    "checksPassed": 33,
+    "fixFirst": [
+      {
+        "checkId": "HEALTH-HTTPS-020",
+        "title": "Site is not served over HTTPS",
+        "severity": "error",
+        "affected": 1,
+        "fix": "Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version."
+      },
+      {
+        "checkId": "HEALTH-LINK-001",
+        "title": "Broken internal link",
+        "severity": "error",
+        "affected": 1,
+        "fix": "Fix the link to point at a working page, or restore the missing page and redirect it if it moved."
+      },
+      {
+        "checkId": "PERF-COMP-020",
+        "title": "HTML is served without compression",
+        "severity": "error",
+        "affected": 1,
+        "fix": "Turn on gzip or Brotli compression for HTML responses in the web server or CDN."
+      },
+      {
+        "checkId": "SEO-INDEX-041",
+        "title": "A noindex page is listed in the sitemap",
+        "severity": "error",
+        "affected": 1,
+        "fix": "Remove the page from the sitemap, or remove the noindex directive."
+      },
+      {
+        "checkId": "SEO-TITLE-001",
+        "title": "Page has no title",
+        "severity": "error",
+        "affected": 1,
+        "fix": "Add a unique <title> that describes the page in about 50 to 60 characters."
+      }
+    ]
+  },
+  "checks": [
+    {
+      "id": "SEO-TITLE-001",
+      "group": "seo",
+      "severity": "error",
+      "title": "Page has no title",
+      "why": "The title is the main heading shown in search results and browser tabs. Without one, search engines pick their own text.",
+      "fix": "Add a unique <title> that describes the page in about 50 to 60 characters.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-TITLE-001",
+          "severity": "error",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/untitled",
+          "detail": "No <title> element, or it is empty."
+        }
+      ]
+    },
+    {
+      "id": "SEO-TITLE-002",
+      "group": "seo",
+      "severity": "info",
+      "title": "Title is very short or very long",
+      "why": "Very short titles say little about the page. Search results cut long titles off, so the end may never be seen.",
+      "fix": "Aim for a title between 10 and 60 characters that puts the main words first.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-TITLE-003",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Title is shared with other pages",
+      "why": "Pages with the same title are hard to tell apart in search results, and they compete for the same searches.",
+      "fix": "Give each page its own title that describes what is unique about it.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-TITLE-003",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-a",
+          "detail": "Title is shared with 1 other indexable page.",
+          "evidence": [
+            "http://127.0.0.1:4173/dup-b"
+          ]
+        },
+        {
+          "checkId": "SEO-TITLE-003",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-b",
+          "detail": "Title is shared with 1 other indexable page.",
+          "evidence": [
+            "http://127.0.0.1:4173/dup-a"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "SEO-TITLE-004",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Page has more than one title",
+      "why": "Browsers and search engines have to choose between the titles, and they may choose the wrong one.",
+      "fix": "Keep a single <title> element in the document head and remove the rest.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-DESC-010",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Page has no meta description",
+      "why": "Search engines often use the meta description as the snippet under the title. Without one they choose text from the page.",
+      "fix": "Add a <meta name=\"description\"> that summarises the page in one or two sentences.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-DESC-011",
+      "group": "seo",
+      "severity": "info",
+      "title": "Meta description is very short or very long",
+      "why": "A very short description gives searchers little reason to click. Search results cut long descriptions off.",
+      "fix": "Write a description between 50 and 160 characters that says what the page offers.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-DESC-011",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/untitled",
+          "detail": "Meta description is 40 characters long. A typical range is 50 to 160."
+        }
+      ]
+    },
+    {
+      "id": "SEO-DESC-012",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Meta description is shared with other pages",
+      "why": "Identical descriptions make different pages look the same in search results.",
+      "fix": "Write a description for each page that reflects its own content.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-DESC-012",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-a",
+          "detail": "Meta description is shared with 1 other indexable page.",
+          "evidence": [
+            "http://127.0.0.1:4173/dup-b"
+          ]
+        },
+        {
+          "checkId": "SEO-DESC-012",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-b",
+          "detail": "Meta description is shared with 1 other indexable page.",
+          "evidence": [
+            "http://127.0.0.1:4173/dup-a"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "SEO-H1-020",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Page has no h1 heading",
+      "why": "The h1 tells readers and search engines what the page is about.",
+      "fix": "Add one <h1> that states the topic of the page.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-H1-021",
+      "group": "seo",
+      "severity": "info",
+      "title": "Page has more than one h1 heading",
+      "why": "HTML allows more than one h1, but a single one keeps the page outline clear for readers and search engines.",
+      "fix": "Use one <h1> for the page topic and <h2> or lower for sections.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-H1-021",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/two-h1",
+          "detail": "The page has 2 <h1> headings."
+        }
+      ]
+    },
+    {
+      "id": "SEO-CANON-030",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Page has no canonical link",
+      "why": "A canonical link tells search engines which URL to index when the same content is reachable at several addresses.",
+      "fix": "Add <link rel=\"canonical\"> pointing at the preferred URL of the page, usually the page itself.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-CANON-030",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/",
+          "detail": "No canonical link found."
+        },
+        {
+          "checkId": "SEO-CANON-030",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/about",
+          "detail": "No canonical link found."
+        },
+        {
+          "checkId": "SEO-CANON-030",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/untitled",
+          "detail": "No canonical link found."
+        },
+        {
+          "checkId": "SEO-CANON-030",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-a",
+          "detail": "No canonical link found."
+        },
+        {
+          "checkId": "SEO-CANON-030",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-b",
+          "detail": "No canonical link found."
+        },
+        {
+          "checkId": "SEO-CANON-030",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/two-h1",
+          "detail": "No canonical link found."
+        },
+        {
+          "checkId": "SEO-CANON-030",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/form",
+          "detail": "No canonical link found."
+        },
+        {
+          "checkId": "SEO-CANON-030",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/media",
+          "detail": "No canonical link found."
+        }
+      ]
+    },
+    {
+      "id": "SEO-CANON-031",
+      "group": "seo",
+      "severity": "error",
+      "title": "Page has conflicting canonical links",
+      "why": "When the canonical links disagree, search engines ignore them and choose for themselves.",
+      "fix": "Keep one canonical link per page. Check whether a plugin or theme adds a second one.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-CANON-032",
+      "group": "seo",
+      "severity": "error",
+      "title": "Canonical points to a broken or redirecting URL",
+      "why": "A canonical that does not return a normal page sends search engines to a dead end, so the page may drop out of the index.",
+      "fix": "Point the canonical at the final URL of a page that returns status 200.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-CANON-033",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Canonical points to a different origin",
+      "why": "A canonical on another host or scheme asks search engines to index that other site instead of this page.",
+      "fix": "Use a canonical on the same scheme and host as the page, unless the move is intended.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-INDEX-040",
+      "group": "seo",
+      "severity": "info",
+      "title": "Page is set to noindex",
+      "why": "Search engines will not list a noindex page. This is listed so you can confirm it is intended.",
+      "fix": "If the page should appear in search, remove the noindex directive from the meta robots tag and the X-Robots-Tag header.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-INDEX-040",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/hidden",
+          "detail": "The page carries a noindex directive."
+        }
+      ]
+    },
+    {
+      "id": "SEO-INDEX-041",
+      "group": "seo",
+      "severity": "error",
+      "title": "A noindex page is listed in the sitemap",
+      "why": "The sitemap says the page should be indexed while the page says it should not. Search engines report this as a conflict.",
+      "fix": "Remove the page from the sitemap, or remove the noindex directive.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-INDEX-041",
+          "severity": "error",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/hidden",
+          "detail": "The page is noindex but is listed in the sitemap."
+        }
+      ]
+    },
+    {
+      "id": "SEO-INDEX-042",
+      "group": "seo",
+      "severity": "error",
+      "title": "A sitemap URL is blocked by robots.txt",
+      "why": "The sitemap offers a URL that robots.txt forbids crawlers to fetch. Search engines cannot read a page they may not crawl.",
+      "fix": "Remove the URL from the sitemap, or change the robots.txt rule that blocks it.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-INDEX-043",
+      "group": "seo",
+      "severity": "error",
+      "title": "The start page is set to noindex",
+      "why": "A noindex start page keeps the home of the site out of search results.",
+      "fix": "Remove the noindex directive from the start page meta robots tag and X-Robots-Tag header.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-LANG-050",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Page has no lang attribute",
+      "why": "The lang attribute tells browsers, search engines and screen readers which language the page is in.",
+      "fix": "Add a lang attribute to the <html> element, for example <html lang=\"en\">.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-VIEW-051",
+      "group": "seo",
+      "severity": "error",
+      "title": "Page has no viewport meta tag",
+      "why": "Without a viewport tag, phones show the page zoomed out as a desktop layout. Search engines judge pages mainly by their mobile version.",
+      "fix": "Add <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"> to the head.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-OG-060",
+      "group": "seo",
+      "severity": "info",
+      "title": "Open Graph tags are missing",
+      "why": "Open Graph tags control the title, text and image shown when the page is shared on social networks and in chat apps.",
+      "fix": "Add og:title, og:description and og:image meta tags to the head.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-OG-060",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/",
+          "detail": "Missing og:title, og:description, og:image."
+        },
+        {
+          "checkId": "SEO-OG-060",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/about",
+          "detail": "Missing og:title, og:description, og:image."
+        },
+        {
+          "checkId": "SEO-OG-060",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/untitled",
+          "detail": "Missing og:title, og:description, og:image."
+        },
+        {
+          "checkId": "SEO-OG-060",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-a",
+          "detail": "Missing og:title, og:description, og:image."
+        },
+        {
+          "checkId": "SEO-OG-060",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-b",
+          "detail": "Missing og:title, og:description, og:image."
+        },
+        {
+          "checkId": "SEO-OG-060",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/two-h1",
+          "detail": "Missing og:title, og:description, og:image."
+        },
+        {
+          "checkId": "SEO-OG-060",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/form",
+          "detail": "Missing og:title, og:description, og:image."
+        },
+        {
+          "checkId": "SEO-OG-060",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/media",
+          "detail": "Missing og:title, og:description, og:image."
+        }
+      ]
+    },
+    {
+      "id": "SEO-LD-070",
+      "group": "seo",
+      "severity": "warning",
+      "title": "Structured data is not valid JSON",
+      "why": "Search engines skip a JSON-LD block they cannot parse, so the page loses any rich results it was meant to earn.",
+      "fix": "Fix the syntax of the JSON-LD block. A JSON validator will point at the error.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-LD-070",
+          "severity": "warning",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/form",
+          "detail": "1 of 1 JSON-LD block could not be parsed. First is block 1: Unexpected end of JSON input"
+        }
+      ]
+    },
+    {
+      "id": "SEO-ROBOTS-080",
+      "group": "seo",
+      "severity": "warning",
+      "title": "No robots.txt file",
+      "why": "Crawlers look for robots.txt first. Without one they assume everything may be crawled and they cannot find the sitemap from it.",
+      "fix": "Publish a robots.txt at the root of the site, even a short one that links to the sitemap.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-ROBOTS-080",
+          "severity": "warning",
+          "group": "seo",
+          "url": null,
+          "detail": "robots.txt returned status 404."
+        }
+      ]
+    },
+    {
+      "id": "SEO-ROBOTS-081",
+      "group": "seo",
+      "severity": "error",
+      "title": "robots.txt blocks the whole site",
+      "why": "A rule that disallows everything for all crawlers keeps the site out of search results.",
+      "fix": "Remove the Disallow: / rule for the all-crawlers group, unless the site is meant to stay private.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-ROBOTS-082",
+      "group": "seo",
+      "severity": "error",
+      "title": "robots.txt returns a server error",
+      "why": "When robots.txt answers with a server error, search engines may stop crawling the site until it recovers.",
+      "fix": "Make robots.txt answer with status 200, or status 404 if you have none. Check the server logs for the error.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-MAP-090",
+      "group": "seo",
+      "severity": "warning",
+      "title": "No sitemap found",
+      "why": "A sitemap helps search engines find every page, especially new pages and pages with few links to them.",
+      "fix": "Publish a sitemap.xml and list it in robots.txt.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-MAP-091",
+      "group": "seo",
+      "severity": "info",
+      "title": "robots.txt does not reference the sitemap",
+      "why": "A Sitemap line in robots.txt lets every crawler find the sitemap without being told about it.",
+      "fix": "Add a line such as Sitemap: https://example.com/sitemap.xml to robots.txt.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-MAP-091",
+          "severity": "info",
+          "group": "seo",
+          "url": null,
+          "detail": "A sitemap exists but robots.txt has no Sitemap line."
+        }
+      ]
+    },
+    {
+      "id": "SEO-MAP-092",
+      "group": "seo",
+      "severity": "error",
+      "title": "A sitemap URL does not return status 200",
+      "why": "The sitemap should list only live pages. Broken or redirecting entries waste crawl effort and lower trust in the file.",
+      "fix": "Remove the URL from the sitemap, or list its final address.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-MAP-093",
+      "group": "seo",
+      "severity": "error",
+      "title": "A sitemap file could not be parsed",
+      "why": "Search engines ignore a sitemap they cannot read, so none of its URLs are submitted.",
+      "fix": "Check that the file is valid sitemap XML and is served with status 200.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-MAP-094",
+      "group": "seo",
+      "severity": "info",
+      "title": "A sitemap URL is not linked from any crawled page",
+      "why": "A page that nothing links to is hard for visitors and crawlers to reach. It may be an orphan.",
+      "fix": "Link the page from a relevant page or the navigation, or remove it from the sitemap if it is retired.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "SEO-THIN-100",
+      "group": "seo",
+      "severity": "info",
+      "title": "Page has little text",
+      "why": "Pages with very little text give search engines little to rank. Some pages, such as contact or gallery pages, are fine this way.",
+      "fix": "If the page should rank, add useful text that answers what visitors come for.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "SEO-THIN-100",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/",
+          "detail": "The page has 77 words of visible text."
+        },
+        {
+          "checkId": "SEO-THIN-100",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/about",
+          "detail": "The page has 62 words of visible text."
+        },
+        {
+          "checkId": "SEO-THIN-100",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/untitled",
+          "detail": "The page has 62 words of visible text."
+        },
+        {
+          "checkId": "SEO-THIN-100",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-a",
+          "detail": "The page has 62 words of visible text."
+        },
+        {
+          "checkId": "SEO-THIN-100",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/dup-b",
+          "detail": "The page has 62 words of visible text."
+        },
+        {
+          "checkId": "SEO-THIN-100",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/two-h1",
+          "detail": "The page has 66 words of visible text."
+        },
+        {
+          "checkId": "SEO-THIN-100",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/form",
+          "detail": "The page has 67 words of visible text."
+        },
+        {
+          "checkId": "SEO-THIN-100",
+          "severity": "info",
+          "group": "seo",
+          "url": "http://127.0.0.1:4173/media",
+          "detail": "The page has 62 words of visible text."
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-LINK-001",
+      "group": "health",
+      "severity": "error",
+      "title": "Broken internal link",
+      "why": "Visitors and search engines who follow the link reach an error page instead of content.",
+      "fix": "Fix the link to point at a working page, or restore the missing page and redirect it if it moved.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-LINK-001",
+          "severity": "error",
+          "group": "health",
+          "url": "http://127.0.0.1:4173/missing",
+          "detail": "The URL returns status 404.",
+          "evidence": [
+            "http://127.0.0.1:4173/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-LINK-002",
+      "group": "health",
+      "severity": "warning",
+      "title": "Internal link points at a redirect",
+      "why": "Each redirect adds a round trip for visitors and passes less of the link's value to the final page.",
+      "fix": "Update the link to point straight at the final address.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-LINK-002",
+          "severity": "warning",
+          "group": "health",
+          "url": "http://127.0.0.1:4173/old-page",
+          "detail": "Redirects to http://127.0.0.1:4173/about",
+          "evidence": [
+            "http://127.0.0.1:4173/"
+          ]
+        },
+        {
+          "checkId": "HEALTH-LINK-002",
+          "severity": "warning",
+          "group": "health",
+          "url": "http://127.0.0.1:4173/chain-a",
+          "detail": "Redirects to http://127.0.0.1:4173/dup-a",
+          "evidence": [
+            "http://127.0.0.1:4173/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-REDIR-010",
+      "group": "health",
+      "severity": "warning",
+      "title": "Redirect chain has more than one hop",
+      "why": "Every extra hop slows the page down and gives crawlers another chance to give up.",
+      "fix": "Redirect the first address straight to the final address.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-REDIR-010",
+          "severity": "warning",
+          "group": "health",
+          "url": "http://127.0.0.1:4173/chain-a",
+          "detail": "Redirect chain of 2 hops ending at http://127.0.0.1:4173/dup-a.",
+          "evidence": [
+            "http://127.0.0.1:4173/chain-a",
+            "http://127.0.0.1:4173/chain-b"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-REDIR-011",
+      "group": "health",
+      "severity": "error",
+      "title": "Redirect loop or too many redirects",
+      "why": "Browsers and crawlers give up on a loop, so the page cannot be reached at all.",
+      "fix": "Remove the redirect that points back at an earlier address in the chain.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "HEALTH-HTTPS-020",
+      "group": "health",
+      "severity": "error",
+      "title": "Site is not served over HTTPS",
+      "why": "Plain HTTP traffic can be read and changed on the way, and browsers label such sites as not secure.",
+      "fix": "Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-HTTPS-020",
+          "severity": "error",
+          "group": "health",
+          "url": null,
+          "detail": "The site is served over plain HTTP."
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-HTTPS-021",
+      "group": "health",
+      "severity": "error",
+      "title": "Mixed content on an HTTPS page",
+      "why": "Browsers block or warn about resources loaded over HTTP on a secure page, so the page can look broken.",
+      "fix": "Change the resource addresses to HTTPS, or remove them.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "HEALTH-HTTPS-022",
+      "group": "health",
+      "severity": "warning",
+      "title": "HTTPS page links to an internal page over HTTP",
+      "why": "Visitors who follow the link leave the secure version of the site and may hit an extra redirect.",
+      "fix": "Change the link to use https://.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "HEALTH-HOST-023",
+      "group": "health",
+      "severity": "warning",
+      "title": "www and apex hosts both answer without a redirect",
+      "why": "Two hosts serving the same site split links and ranking signals, and create duplicate pages.",
+      "fix": "Pick one host as the main one and redirect the other to it.",
+      "status": "not-applicable",
+      "findings": []
+    },
+    {
+      "id": "HEALTH-404-030",
+      "group": "health",
+      "severity": "warning",
+      "title": "Missing pages return 200 (soft 404)",
+      "why": "Search engines may index error pages as real content, and broken links are harder to find.",
+      "fix": "Make the server return status 404 for addresses that do not exist.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "HEALTH-FAV-040",
+      "group": "health",
+      "severity": "info",
+      "title": "No favicon",
+      "why": "Browsers request a favicon on every visit. Without one, tabs and bookmarks show a blank icon and the server logs fill with 404s.",
+      "fix": "Add a favicon link to the page head, or serve a file at /favicon.ico.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-FAV-040",
+          "severity": "info",
+          "group": "health",
+          "url": null,
+          "detail": "No favicon link in the pages and no /favicon.ico file."
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-HDR-050",
+      "group": "health",
+      "severity": "warning",
+      "title": "No Strict-Transport-Security header",
+      "why": "Without this header, browsers may still try plain HTTP first, which leaves a window for downgrade attacks.",
+      "fix": "Send Strict-Transport-Security with a max-age of at least six months on every HTTPS response.",
+      "status": "not-applicable",
+      "findings": []
+    },
+    {
+      "id": "HEALTH-HDR-051",
+      "group": "health",
+      "severity": "info",
+      "title": "No Content-Security-Policy header",
+      "why": "A content security policy limits where scripts and other resources can load from, which reduces the damage of injected code.",
+      "fix": "Add a Content-Security-Policy header. Start in report-only mode if the site loads many third-party resources.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-HDR-051",
+          "severity": "info",
+          "group": "health",
+          "url": null,
+          "detail": "The start page has no Content-Security-Policy header. 8 other pages also lack it."
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-HDR-052",
+      "group": "health",
+      "severity": "warning",
+      "title": "No X-Content-Type-Options nosniff header",
+      "why": "Without nosniff, some browsers guess file types and may run a file as a script when it was not meant to be one.",
+      "fix": "Send X-Content-Type-Options: nosniff on every response.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-HDR-052",
+          "severity": "warning",
+          "group": "health",
+          "url": null,
+          "detail": "The start page has no X-Content-Type-Options: nosniff header. 8 other pages also lack it."
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-HDR-053",
+      "group": "health",
+      "severity": "info",
+      "title": "No Referrer-Policy header",
+      "why": "Without a policy, browsers decide how much of the page address is shared with other sites when a visitor clicks a link.",
+      "fix": "Send a Referrer-Policy header such as strict-origin-when-cross-origin.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-HDR-053",
+          "severity": "info",
+          "group": "health",
+          "url": null,
+          "detail": "The start page has no Referrer-Policy header. 8 other pages also lack it."
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-HDR-054",
+      "group": "health",
+      "severity": "info",
+      "title": "No clickjacking protection",
+      "why": "Without X-Frame-Options or a frame-ancestors rule, other sites can embed the page in a frame and trick visitors into clicking hidden controls.",
+      "fix": "Send X-Frame-Options or add a frame-ancestors rule to the Content-Security-Policy.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "HEALTH-HDR-054",
+          "severity": "info",
+          "group": "health",
+          "url": null,
+          "detail": "The start page has no X-Frame-Options or CSP frame-ancestors header. 8 other pages also lack it."
+        }
+      ]
+    },
+    {
+      "id": "HEALTH-EXT-060",
+      "group": "health",
+      "severity": "warning",
+      "title": "Broken external link",
+      "why": "Links that lead nowhere frustrate visitors and make the site look neglected.",
+      "fix": "Update or remove the link.",
+      "status": "not-applicable",
+      "findings": []
+    },
+    {
+      "id": "HEALTH-FETCH-070",
+      "group": "health",
+      "severity": "warning",
+      "title": "Page timed out or was cut short",
+      "why": "The audit only saw part of the page, and slow pages are also slow for visitors and crawlers.",
+      "fix": "Check the server for slow responses, and reduce the page size if it hit the size cap.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "PERF-RESP-001",
+      "group": "performance",
+      "severity": "warning",
+      "title": "Slow server response",
+      "why": "A slow first response delays everything that follows, and visitors notice.",
+      "fix": "Look at server work before the HTML is sent: slow queries, missing page caching, or an underpowered host.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "PERF-HTML-010",
+      "group": "performance",
+      "severity": "warning",
+      "title": "HTML document is very large",
+      "why": "Large documents take longer to download and parse, especially on slow mobile connections.",
+      "fix": "Remove inline data and repeated markup, and load long lists in parts.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "PERF-COMP-020",
+      "group": "performance",
+      "severity": "error",
+      "title": "HTML is served without compression",
+      "why": "Compression usually cuts the size of HTML by a large share, so pages load faster for every visitor.",
+      "fix": "Turn on gzip or Brotli compression for HTML responses in the web server or CDN.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "PERF-COMP-020",
+          "severity": "error",
+          "group": "performance",
+          "url": "http://127.0.0.1:4173/",
+          "detail": "The 1119 byte HTML response has no gzip, br, deflate or zstd encoding."
+        }
+      ]
+    },
+    {
+      "id": "PERF-COMP-021",
+      "group": "performance",
+      "severity": "warning",
+      "title": "Script or stylesheet served without compression",
+      "why": "Text assets compress well. Sending them as they are wastes bandwidth and slows rendering.",
+      "fix": "Turn on gzip or Brotli compression for JavaScript and CSS files.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "PERF-COMP-021",
+          "severity": "warning",
+          "group": "performance",
+          "url": "http://127.0.0.1:4173/assets/plain.css",
+          "detail": "The 2640 byte stylesheet has no compression.",
+          "evidence": [
+            "http://127.0.0.1:4173/media"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "PERF-CACHE-030",
+      "group": "performance",
+      "severity": "warning",
+      "title": "Static asset is not cached for long",
+      "why": "Without a cache lifetime, returning visitors download the same files again on every visit.",
+      "fix": "Send Cache-Control with a max-age of at least one hour, and a year for files whose names change when they change.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "PERF-CACHE-030",
+          "severity": "warning",
+          "group": "performance",
+          "url": "http://127.0.0.1:4173/assets/huge.png",
+          "detail": "No Cache-Control or Expires header.",
+          "evidence": [
+            "http://127.0.0.1:4173/media"
+          ]
+        },
+        {
+          "checkId": "PERF-CACHE-030",
+          "severity": "warning",
+          "group": "performance",
+          "url": "http://127.0.0.1:4173/assets/plain.css",
+          "detail": "No Cache-Control or Expires header.",
+          "evidence": [
+            "http://127.0.0.1:4173/media"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "PERF-WEIGHT-040",
+      "group": "performance",
+      "severity": "warning",
+      "title": "Page is heavy",
+      "why": "Heavy pages load slowly on mobile connections and use up visitors' data.",
+      "fix": "Compress and resize images first, then remove scripts and fonts the page does not need.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "PERF-WEIGHT-041",
+      "group": "performance",
+      "severity": "error",
+      "title": "Page is very heavy",
+      "why": "Pages this large are slow on most connections and often fail to load on poor ones.",
+      "fix": "Compress and resize images first, then remove scripts and fonts the page does not need.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "PERF-REQ-042",
+      "group": "performance",
+      "severity": "info",
+      "title": "Page references many resources",
+      "why": "Each script, stylesheet and image is another request, which adds delay on slow connections.",
+      "fix": "Combine small files, drop unused ones, and lazy load images below the fold.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "PERF-IMG-050",
+      "group": "performance",
+      "severity": "warning",
+      "title": "Large image",
+      "why": "Large images are the most common reason a page is slow to load.",
+      "fix": "Resize the image to the size it is shown at and compress it, or use a modern format such as WebP or AVIF.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "PERF-IMG-050",
+          "severity": "warning",
+          "group": "performance",
+          "url": "http://127.0.0.1:4173/assets/huge.png",
+          "detail": "The image is 600000 bytes.",
+          "evidence": [
+            "http://127.0.0.1:4173/media"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "PERF-IMG-051",
+      "group": "performance",
+      "severity": "error",
+      "title": "Very large image",
+      "why": "An image this large can take seconds to load and uses a lot of mobile data.",
+      "fix": "Resize the image to the size it is shown at and compress it, or use a modern format such as WebP or AVIF.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "PERF-IMG-052",
+      "group": "performance",
+      "severity": "warning",
+      "title": "Images without width and height",
+      "why": "Without both attributes the browser cannot reserve space, so the page jumps as images load.",
+      "fix": "Add width and height attributes that match the image's own size, and let CSS scale it.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "PERF-IMG-052",
+          "severity": "warning",
+          "group": "performance",
+          "url": "http://127.0.0.1:4173/media",
+          "detail": "1 image lacks a width or height attribute.",
+          "evidence": [
+            "http://127.0.0.1:4173/assets/huge.png"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "PERF-IMG-053",
+      "group": "performance",
+      "severity": "info",
+      "title": "Images below the fold are not lazy loaded",
+      "why": "Images far down the page compete with the content visitors see first.",
+      "fix": "Add loading=\"lazy\" to images that start below the first screen.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "PERF-IMG-054",
+      "group": "performance",
+      "severity": "info",
+      "title": "Large JPEG or PNG",
+      "why": "Modern formats such as WebP and AVIF are often smaller at the same quality.",
+      "fix": "Convert the image to WebP or AVIF, and keep the old format as a fallback only if needed.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "PERF-IMG-054",
+          "severity": "info",
+          "group": "performance",
+          "url": "http://127.0.0.1:4173/assets/huge.png",
+          "detail": "The image/png image is 600000 bytes.",
+          "evidence": [
+            "http://127.0.0.1:4173/media"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "PERF-BLOCK-060",
+      "group": "performance",
+      "severity": "warning",
+      "title": "Render-blocking script in the head",
+      "why": "A script in the head without async or defer stops the browser from showing the page until it has loaded and run.",
+      "fix": "Add defer, or async for independent scripts, or move the script to the end of the body.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "PERF-BLOCK-060",
+          "severity": "warning",
+          "group": "performance",
+          "url": "http://127.0.0.1:4173/media",
+          "detail": "1 script in the head blocks rendering.",
+          "evidence": [
+            "http://127.0.0.1:4173/assets/blocking.js"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "PERF-BLOCK-061",
+      "group": "performance",
+      "severity": "info",
+      "title": "Many stylesheets in the head",
+      "why": "The browser waits for every stylesheet in the head before it draws the page.",
+      "fix": "Combine stylesheets, or inline the critical rules and load the rest later.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "A11Y-ALT-001",
+      "group": "accessibility",
+      "severity": "warning",
+      "title": "Image without an alt attribute",
+      "why": "Screen readers have nothing to say about an image with no alt attribute, and often read out the file name instead.",
+      "fix": "Add an alt attribute that describes the image. Use alt=\"\" for images that are only decoration.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "A11Y-ALT-001",
+          "severity": "warning",
+          "group": "accessibility",
+          "url": "http://127.0.0.1:4173/media",
+          "detail": "1 image has no alt attribute.",
+          "evidence": [
+            "http://127.0.0.1:4173/assets/huge.png"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A11Y-LABEL-010",
+      "group": "accessibility",
+      "severity": "warning",
+      "title": "Form control without a label",
+      "why": "People using screen readers cannot tell what a field is for, and a label also gives a larger target to click.",
+      "fix": "Add a label element that points at the field, or an aria-label or aria-labelledby attribute.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "A11Y-LABEL-010",
+          "severity": "warning",
+          "group": "accessibility",
+          "url": "http://127.0.0.1:4173/form",
+          "detail": "1 form control has no label.",
+          "evidence": [
+            "input[type=text][name=query]"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A11Y-LINK-020",
+      "group": "accessibility",
+      "severity": "warning",
+      "title": "Link without an accessible name",
+      "why": "A link with no text, label or image alt is announced as just link, so people using screen readers cannot tell where it goes.",
+      "fix": "Add link text, or an aria-label, or alt text on the image inside the link.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "A11Y-LINK-021",
+      "group": "accessibility",
+      "severity": "info",
+      "title": "Generic link text",
+      "why": "People who move through a page by its links hear them out of context, so click here and read more tell them nothing.",
+      "fix": "Write link text that says where the link goes or what it does.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "A11Y-LINK-021",
+          "severity": "info",
+          "group": "accessibility",
+          "url": "http://127.0.0.1:4173/form",
+          "detail": "1 link uses generic text such as click here.",
+          "evidence": [
+            "/about"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A11Y-BTN-030",
+      "group": "accessibility",
+      "severity": "warning",
+      "title": "Button without an accessible name",
+      "why": "A button with no text or label is announced as just button, so people using screen readers cannot tell what it does.",
+      "fix": "Add text inside the button, or an aria-label.",
+      "status": "pass",
+      "findings": []
+    },
+    {
+      "id": "A11Y-HEAD-040",
+      "group": "accessibility",
+      "severity": "info",
+      "title": "Heading levels are skipped",
+      "why": "People who move through a page by its headings expect the levels to nest, and a gap suggests missing content.",
+      "fix": "Use the next heading level down, and pick levels for structure and not for size.",
+      "status": "fail",
+      "findings": [
+        {
+          "checkId": "A11Y-HEAD-040",
+          "severity": "info",
+          "group": "accessibility",
+          "url": "http://127.0.0.1:4173/form",
+          "detail": "1 heading level is skipped.",
+          "evidence": [
+            "h1 to h3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A11Y-FRAME-050",
+      "group": "accessibility",
+      "severity": "info",
+      "title": "Iframe without a title",
+      "why": "Screen readers announce an iframe by its title, so without one people cannot tell what the embedded content is.",
+      "fix": "Add a short title attribute that says what the frame contains.",
+      "status": "pass",
+      "findings": []
+    }
+  ],
+  "pages": [
+    {
+      "url": "http://127.0.0.1:4173/",
+      "status": 200,
+      "responseMs": 40,
+      "counts": {
+        "error": 1,
+        "warning": 1,
+        "info": 2
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/about",
+      "status": 200,
+      "responseMs": 47,
+      "counts": {
+        "error": 0,
+        "warning": 1,
+        "info": 2
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/untitled",
+      "status": 200,
+      "responseMs": 54,
+      "counts": {
+        "error": 1,
+        "warning": 1,
+        "info": 3
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/dup-a",
+      "status": 200,
+      "responseMs": 61,
+      "counts": {
+        "error": 0,
+        "warning": 3,
+        "info": 2
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/dup-b",
+      "status": 200,
+      "responseMs": 68,
+      "counts": {
+        "error": 0,
+        "warning": 3,
+        "info": 2
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/two-h1",
+      "status": 200,
+      "responseMs": 75,
+      "counts": {
+        "error": 0,
+        "warning": 1,
+        "info": 3
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/hidden",
+      "status": 200,
+      "responseMs": 82,
+      "counts": {
+        "error": 1,
+        "warning": 0,
+        "info": 1
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/form",
+      "status": 200,
+      "responseMs": 89,
+      "counts": {
+        "error": 0,
+        "warning": 3,
+        "info": 4
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/media",
+      "status": 200,
+      "responseMs": 96,
+      "counts": {
+        "error": 0,
+        "warning": 4,
+        "info": 2
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/missing",
+      "status": 404,
+      "responseMs": 103,
+      "counts": {
+        "error": 1,
+        "warning": 0,
+        "info": 0
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/old-page",
+      "status": 200,
+      "responseMs": 110,
+      "counts": {
+        "error": 0,
+        "warning": 1,
+        "info": 0
+      }
+    },
+    {
+      "url": "http://127.0.0.1:4173/chain-a",
+      "status": 200,
+      "responseMs": 117,
+      "counts": {
+        "error": 0,
+        "warning": 2,
+        "info": 0
+      }
+    }
+  ],
+  "lighthouse": null
+}
