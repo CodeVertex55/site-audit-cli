@@ -573,7 +573,7 @@ describe("redirects", () => {
 });
 
 describe("requests stay on the origin and out of disallowed paths", () => {
-  test("a robots.txt that redirects to another host is unreadable and nothing is sent there", async () => {
+  test("a robots.txt that redirects to a different site is unreadable and nothing is sent there", async () => {
     const site = await start({
       "/robots.txt": { status: 301, headers: { location: "https://other.example/robots.txt" } },
       "/": { body: page() },
@@ -582,7 +582,7 @@ describe("requests stay on the origin and out of disallowed paths", () => {
     const run = crawlSite(opts(site), { fetchImpl: spy.fetchImpl });
     await expect(run).rejects.toBeInstanceOf(UnreachableError);
     await expect(crawlSite(opts(site), { fetchImpl: spy.fetchImpl })).rejects.toThrow(
-      /redirected to another host/,
+      /redirected to a different site/,
     );
     expect(site.hits("/")).toBe(0);
     expect(spy.seen).toEqual([]);
@@ -592,7 +592,7 @@ describe("requests stay on the origin and out of disallowed paths", () => {
     expect(spy.seen).toEqual([]);
   });
 
-  test("a sitemap.xml that redirects to another host is noted and nothing is sent there", async () => {
+  test("a sitemap.xml that redirects to a different site is noted and nothing is sent there", async () => {
     const site = await start({
       "/sitemap.xml": { status: 302, headers: { location: "https://other.example/sitemap.xml" } },
       "/": { body: page() },
@@ -606,12 +606,12 @@ describe("requests stay on the origin and out of disallowed paths", () => {
         url: site.url("/sitemap.xml"),
         status: 302,
         ok: false,
-        note: "redirected to another host, not read",
+        note: "redirected to a different site, not read",
       },
     ]);
   });
 
-  test("a sitemap named in robots.txt that redirects to another host is noted and not followed", async () => {
+  test("a sitemap named in robots.txt that redirects to a different site is noted and not followed", async () => {
     const site = await start({
       "/robots.txt": (req) => ({
         headers: ROBOTS_TEXT,
@@ -626,7 +626,7 @@ describe("requests stay on the origin and out of disallowed paths", () => {
     expect(spy.seen).toEqual([]);
     expect(ctx.sitemap.files).toHaveLength(1);
     expect(ctx.sitemap.files[0]).toMatchObject({ status: 301, ok: false });
-    expect(ctx.sitemap.files[0]?.note).toMatch(/another host/);
+    expect(ctx.sitemap.files[0]?.note).toMatch(/different site/);
   });
 
   test("a start URL that redirects into a disallowed path never requests it", async () => {
@@ -686,6 +686,173 @@ describe("requests stay on the origin and out of disallowed paths", () => {
     await expect(crawlSite(opts(origin))).rejects.toThrow(/several hosts/);
     expect(last.log).toEqual([]);
   });
+});
+
+type StandIn = { ctx: Promise<SiteContext>; seen: string[] };
+
+/** Crawls a stand-in network, for tests that need real host names. */
+function crawlStandIn(
+  routes: Record<string, FakeRoute>,
+  startUrl: string,
+  over: Partial<AuditOptions> = {},
+): StandIn {
+  const web = fakeWeb(routes);
+  const ctx = crawlSite(
+    { ...DEFAULT_OPTIONS, startUrl, delayMs: 0, timeoutMs: 2000, ...over },
+    { fetchImpl: web.fetchImpl },
+  );
+  return { ctx, seen: web.seen };
+}
+
+const SECRET_ROBOTS = "User-agent: *\nDisallow: /secret/\n";
+const HOME_WITH_SECRET = page({ body: `<a href="/secret/x">s</a> <a href="/ok">ok</a>` });
+
+describe("same-site redirects of robots.txt and sitemaps", () => {
+  test("a robots.txt redirect to the www sibling is followed and its rules apply to the asked origin", async () => {
+    const routes: Record<string, FakeRoute> = {
+      "https://site.example/robots.txt": {
+        status: 301,
+        location: "https://www.site.example/robots.txt",
+      },
+      "https://www.site.example/robots.txt": { body: SECRET_ROBOTS },
+      "https://site.example/": { body: HOME_WITH_SECRET },
+      "https://site.example/ok": { body: page() },
+      "https://site.example/secret/x": { body: page() },
+    };
+    const run = crawlStandIn(routes, "https://site.example/");
+    const ctx = await run.ctx;
+    expect(ctx.robots).toMatchObject({ status: 200, present: true });
+    expect(ctx.limits.blockedByRobots).toEqual(["https://site.example/secret/x"]);
+    expect(run.seen).not.toContain("GET https://site.example/secret/x");
+    expect(run.seen).toContain("GET https://www.site.example/robots.txt");
+
+    const blocked = crawlStandIn(routes, "https://site.example/secret/x");
+    await expect(blocked.ctx).rejects.toThrow(/disallows/);
+    expect(blocked.seen).not.toContain("GET https://site.example/secret/x");
+  });
+
+  test("a robots.txt redirect from http to https is followed", async () => {
+    const run = crawlStandIn(
+      {
+        "http://site.example/robots.txt": {
+          status: 301,
+          location: "https://site.example/robots.txt",
+        },
+        "https://site.example/robots.txt": { body: SECRET_ROBOTS },
+        "http://site.example/": { body: HOME_WITH_SECRET },
+        "http://site.example/ok": { body: page() },
+        "http://site.example/secret/x": { body: page() },
+      },
+      "http://site.example/",
+    );
+    const ctx = await run.ctx;
+    expect(ctx.robots).toMatchObject({ status: 200, present: true });
+    expect(ctx.limits.blockedByRobots).toEqual(["http://site.example/secret/x"]);
+    expect(run.seen).not.toContain("GET http://site.example/secret/x");
+  });
+
+  test("a robots.txt redirect to an unrelated host sends nothing there", async () => {
+    const routes: Record<string, FakeRoute> = {
+      "https://site.example/robots.txt": {
+        status: 301,
+        location: "https://other.example/robots.txt",
+      },
+      "https://site.example/": { body: page() },
+    };
+    const run = crawlStandIn(routes, "https://site.example/");
+    await expect(run.ctx).rejects.toThrow(/different site/);
+    expect(run.seen.filter((s) => s.includes("other.example"))).toEqual([]);
+    expect(run.seen).not.toContain("GET https://site.example/");
+
+    const ignored = crawlStandIn(routes, "https://site.example/", { ignoreRobots: true });
+    expect((await ignored.ctx).robots.present).toBe(false);
+    expect(ignored.seen.filter((s) => s.includes("other.example"))).toEqual([]);
+  });
+
+  test("a sitemap redirect to the www sibling is followed", async () => {
+    const run = crawlStandIn(
+      {
+        "https://site.example/sitemap.xml": {
+          status: 301,
+          location: "https://www.site.example/sitemap.xml",
+        },
+        "https://www.site.example/sitemap.xml": {
+          body: "<urlset><url><loc>https://site.example/p1</loc></url></urlset>",
+        },
+        "https://site.example/": { body: page() },
+        "https://site.example/p1": { body: page() },
+      },
+      "https://site.example/",
+    );
+    const ctx = await run.ctx;
+    expect(ctx.sitemap.found).toBe(true);
+    expect(ctx.sitemap.urls).toEqual(["https://site.example/p1"]);
+    expect(ctx.sitemap.files).toEqual([
+      { url: "https://site.example/sitemap.xml", status: 200, ok: true, note: null },
+    ]);
+    expect(ctx.pages.map((p) => p.url)).toContain("https://site.example/p1");
+  });
+
+  test("a sitemap redirect from http to https is followed", async () => {
+    const run = crawlStandIn(
+      {
+        "http://site.example/sitemap.xml": {
+          status: 301,
+          location: "https://site.example/sitemap.xml",
+        },
+        "https://site.example/sitemap.xml": {
+          body: "<urlset><url><loc>http://site.example/p1</loc></url></urlset>",
+        },
+        "http://site.example/": { body: page() },
+        "http://site.example/p1": { body: page() },
+      },
+      "http://site.example/",
+    );
+    const ctx = await run.ctx;
+    expect(ctx.sitemap.found).toBe(true);
+    expect(ctx.sitemap.urls).toEqual(["http://site.example/p1"]);
+  });
+
+  test("a sitemap redirect to an unrelated host sends nothing there", async () => {
+    const run = crawlStandIn(
+      {
+        "https://site.example/sitemap.xml": {
+          status: 302,
+          location: "https://other.example/sitemap.xml",
+        },
+        "https://site.example/": { body: page() },
+      },
+      "https://site.example/",
+    );
+    const ctx = await run.ctx;
+    expect(run.seen.filter((s) => s.includes("other.example"))).toEqual([]);
+    expect(ctx.sitemap.files).toEqual([
+      {
+        url: "https://site.example/sitemap.xml",
+        status: 302,
+        ok: false,
+        note: "redirected to a different site, not read",
+      },
+    ]);
+  });
+});
+
+describe("a start redirect that changes only the scheme", () => {
+  test("does not wait on its own gate slot when concurrency is 1", async () => {
+    const run = crawlStandIn(
+      {
+        "http://site.example/": { status: 301, location: "https://site.example/" },
+        "https://site.example/": { body: page({ title: "Secure" }) },
+      },
+      "http://site.example/",
+      { concurrency: 1 },
+    );
+    const ctx = await run.ctx;
+    expect(ctx.origin).toBe("https://site.example");
+    expect(ctx.originNote).toBe("Start URL redirected to https://site.example/");
+    expect(ctx.pages.find((p) => p.url === "https://site.example/")?.doc?.title).toBe("Secure");
+    expect(run.seen.filter((s) => s === "GET https://site.example/robots.txt")).toHaveLength(1);
+  }, 4000);
 });
 
 describe("pages", () => {

@@ -264,8 +264,12 @@ function countWords(root: El): number {
           words += 1;
         }
       }
-    } else if (node.children !== undefined && !isScriptOrStyle(node)) {
-      if (node.name !== undefined && WORD_SKIPPED_TAGS.has(node.name)) continue;
+    } else if (
+      isScriptOrStyle(node) ||
+      (node.name !== undefined && WORD_SKIPPED_TAGS.has(node.name))
+    ) {
+      inWord = false;
+    } else if (node.children !== undefined) {
       inWord = false;
       stack.push(ELEMENT_END);
       for (let i = node.children.length - 1; i >= 0; i -= 1) {

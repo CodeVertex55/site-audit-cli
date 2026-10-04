@@ -657,6 +657,15 @@ describe("word count", () => {
     expect(extractDocument(html("", "<p>a<br>b</p>"), URL0).wordCount).toBe(2);
   });
 
+  test("skipped elements still break a word", () => {
+    expect(extractDocument(html("", "foo<svg></svg>bar"), URL0).wordCount).toBe(2);
+    expect(extractDocument(html("", "foo<script>x()</script>bar"), URL0).wordCount).toBe(2);
+    expect(
+      extractDocument(html("", "foo<style>p{}</style>bar<noscript>n</noscript>baz"), URL0)
+        .wordCount,
+    ).toBe(3);
+  });
+
   test("whitespace and empty elements do not add words", () => {
     expect(
       extractDocument(html("", "<p> </p><div></div><span>x</span><p></p>"), URL0).wordCount,

@@ -5,6 +5,7 @@ import {
   type AssetRecord,
   type AuditOptions,
   type FetchFailure,
+  type Hop,
   type PageRecord,
   type SiteContext,
 } from "../types.js";
@@ -46,7 +47,7 @@ const MAX_SITEMAP_URLS = 5000;
 const MAX_ROBOTS_CHARS = 512 * 1024;
 const BLOCKED_CODE = "SITE_AUDIT_BLOCKED";
 
-type BlockReason = "origin" | "excluded" | "robots";
+type BlockReason = "origin" | "shift" | "excluded" | "robots";
 
 type RobotsState = {
   file: RobotsFile | null;
@@ -113,22 +114,77 @@ function guardedFetch(
   };
 }
 
-/** How fetchers are made: the shared gate and fetch, plus a way to add a guard. */
+/** How fetchers are made: the shared fetch and gates, plus a way to add a guard. */
 type Net = {
   baseFetch: typeof fetch;
-  make: (fetchImpl: typeof fetch) => Fetcher;
+  gate: HostGate;
+  otherGate: HostGate;
+  make: (fetchImpl: typeof fetch, gate: HostGate) => Fetcher;
 };
 
-/** A fetcher on the audit gate that refuses every URL outside the given origin. */
-function originOnly(net: Net, origin: string): Fetcher {
-  return net.make(
-    guardedFetch(net.baseFetch, (url) => (sameOrigin(url, origin) ? null : "origin"), new Map()),
-  );
+/**
+ * Sends the audit host through the audit gate and every other host through the one-at-a-time
+ * gate, so a redirect to a sibling host is paced like any other host.
+ */
+class RoutedGate extends HostGate {
+  private readonly primary: HostGate;
+  private readonly secondary: HostGate;
+  private readonly primaryHost: string;
+
+  constructor(primary: HostGate, secondary: HostGate, primaryHost: string) {
+    super({ delayMs: 0, concurrency: 1 });
+    this.primary = primary;
+    this.secondary = secondary;
+    this.primaryHost = primaryHost;
+  }
+
+  private pick(host: string): HostGate {
+    return host === this.primaryHost ? this.primary : this.secondary;
+  }
+
+  override acquire(host: string): Promise<() => void> {
+    return this.pick(host).acquire(host);
+  }
+
+  override setMinDelay(host: string, ms: number): void {
+    this.pick(host).setMinDelay(host, ms);
+  }
+
+  override doubleDelay(host: string): boolean {
+    return this.pick(host).doubleDelay(host);
+  }
+
+  override delayFor(host: string): number {
+    return this.pick(host).delayFor(host);
+  }
 }
 
-/** True when a fetch failed because a redirect led away from `origin` and was not followed. */
-function leftOrigin(r: FetchResult, origin: string): boolean {
-  return r.failure === "other" && r.hops.length > 0 && !sameOrigin(r.finalUrl, origin);
+/**
+ * Same site as the origin: the same hostname, or its www or apex sibling, on the same port or
+ * the scheme's default port. So http to https and www to apex count, another host does not.
+ */
+function sameSite(url: string, origin: string): boolean {
+  try {
+    const target = new URL(url);
+    const base = new URL(origin);
+    const host =
+      target.hostname === base.hostname || target.hostname === siblingHost(base.hostname);
+    return host && (target.port === "" || target.port === base.port);
+  } catch {
+    return false;
+  }
+}
+
+/** A fetcher that follows redirects only while they stay on the origin's site. */
+function siteOnly(net: Net, origin: string): Fetcher {
+  const gate = new RoutedGate(net.gate, net.otherGate, new URL(origin).host);
+  const reasonFor = (url: string): BlockReason | null => (sameSite(url, origin) ? null : "origin");
+  return net.make(guardedFetch(net.baseFetch, reasonFor, new Map()), gate);
+}
+
+/** True when a fetch failed because a redirect led to a different site and was not followed. */
+function leftSite(r: FetchResult, origin: string): boolean {
+  return r.failure === "other" && r.hops.length > 0 && !sameSite(r.finalUrl, origin);
 }
 
 function lastHopStatus(r: FetchResult): number | null {
@@ -180,7 +236,7 @@ async function loadRobots(
 ): Promise<RobotsState> {
   const r = await fetcher.get(`${origin}/robots.txt`);
   const ignored = options.ignoreRobots;
-  const movedAway = leftOrigin(r, origin);
+  const movedAway = leftSite(r, origin);
   const none = (unreadable: string | null): RobotsState => ({
     file: null,
     summary: robotsSummary(movedAway ? lastHopStatus(r) : r.status, false, ignored),
@@ -188,7 +244,7 @@ async function loadRobots(
     clamped: false,
     unreadable,
   });
-  if (movedAway) return none("it redirected to another host");
+  if (movedAway) return none("it redirected to a different site");
   if (r.status === null) return none(r.failure ?? "other");
   if (r.status >= 500) return none(`status ${r.status}`);
   if (r.status < 200 || r.status >= 300) return none(null);
@@ -290,6 +346,7 @@ function failStart(
  * never requested. Every hop of the start URL's redirect chain is checked before it is sent:
  * it must not match --exclude or be disallowed by robots.txt. A hop to another origin is allowed
  * once, as the move of the audit origin, and only after that origin's robots.txt has been read.
+ * That read happens between two fetches, never inside a request that holds a gate slot.
  */
 async function openSite(
   options: AuditOptions,
@@ -303,7 +360,7 @@ async function openSite(
   const blockedAt = new Map<string, BlockReason>();
 
   const requestedRobots = await loadRobots(
-    originOnly(net, requestedOrigin),
+    siteOnly(net, requestedOrigin),
     requestedOrigin,
     options,
   );
@@ -312,15 +369,10 @@ async function openSite(
   applyCrawlDelay(gate, requestedOrigin, requestedRobots, options, say);
 
   let currentOrigin = requestedOrigin;
-  const verdict = async (url: string): Promise<BlockReason | null> => {
+  const verdict = (url: string): BlockReason | null => {
     if (url === requested) return null;
-    const hopOrigin = originOf(url);
-    if (hopOrigin !== currentOrigin) {
-      if (currentOrigin !== requestedOrigin) return "origin";
-      const loaded = await loadRobots(originOnly(net, hopOrigin), hopOrigin, options);
-      robotsByOrigin.set(hopOrigin, loaded);
-      currentOrigin = hopOrigin;
-    }
+    if (originOf(url) !== currentOrigin)
+      return currentOrigin === requestedOrigin ? "shift" : "origin";
     if (isExcluded(url, options.exclude)) return "excluded";
     const state = robotsByOrigin.get(currentOrigin);
     if (!options.ignoreRobots && state !== undefined) {
@@ -328,9 +380,19 @@ async function openSite(
     }
     return null;
   };
-  const startFetcher = net.make(guardedFetch(net.baseFetch, verdict, blockedAt));
+  const startFetcher = net.make(guardedFetch(net.baseFetch, verdict, blockedAt), net.gate);
 
-  const start = await startFetcher.get(requested);
+  const hops: Hop[] = [];
+  let start = await startFetcher.get(requested);
+  hops.push(...start.hops);
+  while (start.failure === "other" && blockedAt.get(start.finalUrl) === "shift") {
+    const next = originOf(start.finalUrl);
+    robotsByOrigin.set(next, await loadRobots(siteOnly(net, next), next, options));
+    currentOrigin = next;
+    start = await startFetcher.get(start.finalUrl);
+    hops.push(...start.hops);
+  }
+  start = { ...start, url: requested, hops };
   if (start.status === null) failStart(start, blockedAt, (o) => robotsByOrigin.get(o), options);
   const origin = originOf(start.finalUrl);
   const robots = robotsByOrigin.get(origin) ?? requestedRobots;
@@ -374,8 +436,8 @@ async function loadSitemaps(
   while (pending.length > 0 && files.length < MAX_SITEMAP_FILES) {
     const item = pending.shift();
     if (item === undefined) break;
-    if (!sameOrigin(item.url, origin)) {
-      record(item.url, null, false, "on another host, not read");
+    if (!sameSite(item.url, origin)) {
+      record(item.url, null, false, "on a different site, not read");
       continue;
     }
     if (new URL(item.url).pathname.toLowerCase().endsWith(".gz")) {
@@ -385,8 +447,8 @@ async function loadSitemaps(
     }
     const r = await fetcher.get(item.url);
     if (r.status === null) {
-      if (leftOrigin(r, origin)) {
-        record(item.url, lastHopStatus(r), false, "redirected to another host, not read");
+      if (leftSite(r, origin)) {
+        record(item.url, lastHopStatus(r), false, "redirected to a different site, not read");
       } else {
         record(item.url, null, false, r.failure ?? "other");
       }
@@ -850,7 +912,12 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
       onThrottle,
     });
   const main = build(gate, baseFetch);
-  const net: Net = { baseFetch, make: (fetchImpl) => build(gate, fetchImpl) };
+  const net: Net = {
+    baseFetch,
+    gate,
+    otherGate,
+    make: (fetchImpl, hostGate) => build(hostGate, fetchImpl),
+  };
 
   const opened = await openSite(options, net, gate, say);
   const { origin, robots } = opened;
@@ -869,7 +936,7 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     other: build(otherGate, baseFetch),
   };
 
-  const sitemap = await loadSitemaps(originOnly(net, origin), origin, robots.summary.sitemaps, say);
+  const sitemap = await loadSitemaps(siteOnly(net, origin), origin, robots.summary.sitemaps, say);
   const crawl = await crawlPages({
     options,
     origin,
