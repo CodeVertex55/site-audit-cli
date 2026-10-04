@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { extractDocument } from "../src/crawl/extract.js";
+import { exceedsNestingLimit, extractDocument } from "../src/crawl/extract.js";
 
 const URL0 = "https://site.example/dir/page";
 
@@ -686,6 +686,13 @@ describe("hostile and broken markup", () => {
     expect(Date.now() - started).toBeLessThan(3000);
     expect(doc.title).toBe("Deep");
     expect(doc.links.map((l) => l.href)).toEqual(["/before"]);
+  });
+
+  test("exceedsNestingLimit tells when the nesting guard would cut the page", () => {
+    expect(exceedsNestingLimit(html("", "<div>".repeat(3000)))).toBe(true);
+    expect(exceedsNestingLimit(html("", "<div>".repeat(900)))).toBe(false);
+    expect(exceedsNestingLimit(html("", "<li>item ".repeat(5000)))).toBe(false);
+    expect(exceedsNestingLimit("")).toBe(false);
   });
 
   test("moderately deep nesting is read in full", () => {

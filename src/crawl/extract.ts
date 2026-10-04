@@ -287,6 +287,11 @@ function limitNesting(html: string): string {
   return html;
 }
 
+/** True when `extractDocument` would cut this HTML at the nesting cap. */
+export function exceedsNestingLimit(html: string): boolean {
+  return limitNesting(html).length < html.length;
+}
+
 function describeElement(el: El, attributes: string[]): string {
   let out = el.tagName.toLowerCase();
   for (const name of attributes) {
