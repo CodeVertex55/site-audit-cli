@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { homedir } from "node:os";
 import type { LighthousePage, LighthouseSection } from "../types.js";
 import { parseLighthouseResult } from "./parse.js";
 
@@ -15,51 +14,22 @@ export const LIGHTHOUSE_NOT_FOUND_NOTE =
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_BUFFER = 64 * 1024 * 1024;
-const MESSAGE_MAX = 200;
-
-function firstLine(text: string): string {
-  return (
-    text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line !== "") ?? ""
-  );
-}
-
-function slashed(text: string): string {
-  return text.replace(/\\/g, "/").toLowerCase();
-}
-
-/** True when the text names a local path the report must not carry. */
-function revealsLocalPath(text: string, entry: string): boolean {
-  const haystack = slashed(text);
-  return [entry, process.execPath, homedir()].some((path) => {
-    const needle = slashed(path);
-    return needle !== "" && haystack.includes(needle);
-  });
-}
 
 /**
- * The failure text for a child that did not exit cleanly. Built from fixed strings and, at most,
- * the first line of stderr when that line names no local path; never from the command line.
+ * The failure text for a child that did not exit cleanly. Fixed strings only: nothing the child
+ * wrote, and nothing from the command line, ever reaches the report.
  */
 function failureText(
-  error: { killed?: boolean; code?: unknown },
-  stderr: string,
-  entry: string,
+  error: { killed?: boolean; code?: unknown; signal?: unknown },
   timeoutMs: number,
 ): string {
+  if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return "Lighthouse output was too large.";
   if (error.killed === true) {
-    return `Lighthouse timed out after ${Math.round(timeoutMs / 1000)} seconds.`;
+    return `Lighthouse timed out after ${Math.ceil(timeoutMs / 1000)} seconds.`;
   }
-  if (typeof error.code !== "number") {
-    return error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-      ? "Lighthouse output was too large."
-      : "Lighthouse could not be started.";
-  }
-  const fixed = `Lighthouse exited with code ${error.code}.`;
-  const line = firstLine(stderr);
-  return line === "" || revealsLocalPath(line, entry) ? fixed : line.slice(0, MESSAGE_MAX);
+  if (typeof error.code === "number") return `Lighthouse exited with code ${error.code}.`;
+  if (typeof error.signal === "string") return "Lighthouse was stopped by a signal.";
+  return "Lighthouse could not be started.";
 }
 
 /**
@@ -83,15 +53,15 @@ export function createProcessRunner(
           "--chrome-flags=--headless=new",
         ],
         { maxBuffer: MAX_BUFFER, timeout: timeoutMs, windowsHide: true, encoding: "utf8" },
-        (error, stdout, stderr) => {
+        (error, stdout) => {
           if (error !== null) {
-            resolve({ ok: false, error: failureText(error, stderr, entry, timeoutMs) });
+            resolve({ ok: false, error: failureText(error, timeoutMs) });
             return;
           }
           try {
             resolve({ ok: true, raw: JSON.parse(stdout) as unknown });
           } catch {
-            resolve({ ok: false, error: "Lighthouse output was not valid JSON." });
+            resolve({ ok: false, error: "Lighthouse output could not be read." });
           }
         },
       );
@@ -126,8 +96,8 @@ export async function runLighthouse(
     let outcome: Awaited<ReturnType<LighthouseRunner>>;
     try {
       outcome = await runner(url);
-    } catch (error) {
-      outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    } catch {
+      outcome = { ok: false, error: "Lighthouse could not be run." };
     }
     if (!outcome.ok) {
       pages.push(failedPage(url, outcome.error));

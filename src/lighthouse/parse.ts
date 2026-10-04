@@ -21,13 +21,21 @@ function metric(audits: Dict | null, key: string): number | null {
   return finiteNumber(asDict(audits?.[key])?.numericValue);
 }
 
+const ERROR_CODE = /^[A-Z][A-Z0-9_]{1,40}$/;
+const VERSION = /^[0-9A-Za-z.+-]{1,30}$/;
+
+/** Only a Lighthouse error code is reported, never its free-text message. */
 function runtimeError(raw: Dict): string | null {
   const error = asDict(raw.runtimeError);
   if (error === null) return null;
-  const message = error.message;
-  return typeof message === "string" && message.trim() !== ""
-    ? message
+  const code = error.code;
+  return typeof code === "string" && ERROR_CODE.test(code)
+    ? `Lighthouse reported a runtime error (${code}).`
     : "Lighthouse reported a runtime error.";
+}
+
+function safeVersion(value: unknown): string | null {
+  return typeof value === "string" && VERSION.test(value) ? value : null;
 }
 
 /** Reads the scores, lab metrics and version out of a Lighthouse JSON result. Never throws. */
@@ -56,6 +64,6 @@ export function parseLighthouseResult(
       },
       error: runtimeError(root),
     },
-    version: typeof root.lighthouseVersion === "string" ? root.lighthouseVersion : null,
+    version: safeVersion(root.lighthouseVersion),
   };
 }

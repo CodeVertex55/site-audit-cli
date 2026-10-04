@@ -250,14 +250,38 @@ describe("parseLighthouseResult", () => {
     expect(parsed.seo).toBe(50);
   });
 
-  test("a runtime error becomes the page error and the scores stay null", () => {
-    const raw = { runtimeError: { code: "NO_FCP", message: "The page did not paint." } };
+  test("a runtime error is reported by its code only, never its message", () => {
+    const message = "C:\\Users\\Some Name\\chrome failed";
+    const raw = { runtimeError: { code: "NO_FCP", message } };
     expect(parseLighthouseResult(raw, "u").page).toEqual({
       url: "u",
       scores: NULL_SCORES,
       metrics: NULL_METRICS,
-      error: "The page did not paint.",
+      error: "Lighthouse reported a runtime error (NO_FCP).",
     });
+  });
+
+  test.each([["../../etc"], ["no_fcp"], ["X"], ["A".repeat(42)], [42], [undefined]])(
+    "a runtime error with the code %j gets the generic message",
+    (code) => {
+      const raw = { runtimeError: { code, message: "secret" } };
+      expect(parseLighthouseResult(raw, "u").page.error).toBe(
+        "Lighthouse reported a runtime error.",
+      );
+    },
+  );
+
+  test.each([["/home/me/lighthouse"], ["12 0"], [""], ["1".repeat(31)], [12], [null]])(
+    "a version that is not a plain version string becomes null: %j",
+    (lighthouseVersion) => {
+      expect(parseLighthouseResult({ lighthouseVersion }, "u").version).toBeNull();
+    },
+  );
+
+  test("a plain version string is kept", () => {
+    expect(parseLighthouseResult({ lighthouseVersion: "12.0.0-beta.1+x" }, "u").version).toBe(
+      "12.0.0-beta.1+x",
+    );
   });
 });
 
@@ -336,10 +360,11 @@ describe("runLighthouse", () => {
   });
 
   test("a runner that throws is a failed page, not a thrown error", async () => {
-    const runner: LighthouseRunner = () => Promise.reject(new Error("spawn failed"));
+    const runner: LighthouseRunner = () =>
+      Promise.reject(new Error("spawn failed in C:\\Users\\Some Name"));
     const section = await runLighthouse(["https://a.test/"], runner);
     expect(section.status).toBe("failed");
-    expect(section.pages[0]?.error).toBe("spawn failed");
+    expect(section.pages[0]?.error).toBe("Lighthouse could not be run.");
   });
 });
 
@@ -366,35 +391,25 @@ describe("createProcessRunner", () => {
     ]);
   });
 
-  test("a script that exits 1 is a failure carrying its stderr", async () => {
-    const entry = fakeLighthouse(`console.error("no chrome here"); process.exit(1);\n`);
-    const result = await createProcessRunner(entry)("https://example.com/");
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toContain("no chrome here");
-  });
-
-  test("a silent non-zero exit gives a fixed message with no command line or local path", async () => {
-    const entry = fakeLighthouse(`process.exit(1);\n`);
+  test("stderr text never reaches the error: a file URL and a stack trace give the exit code only", async () => {
+    const entry = fakeLighthouse(
+      `console.error("file:///C:/Users/Some%20Name/x/cli/index.js:2\\n    throw new Error(1);\\nError: boom\\n    at file:///C:/Users/Some%20Name/x/cli/index.js:2:7"); process.exit(1);\n`,
+    );
     const result = await createProcessRunner(entry)("https://example.com/");
     expect(result).toEqual({ ok: false, error: "Lighthouse exited with code 1." });
   });
 
-  test("a missing entry file never puts its path in the error", async () => {
-    const missing = join(tempDir(), "cli", "index.js");
-    const result = await createProcessRunner(missing)("https://example.com/");
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).not.toContain(missing);
-    expect(result.error).not.toContain(process.execPath);
-    expect(result.error).not.toContain("example.com");
+  test("a silent non-zero exit gives the exit code only", async () => {
+    const entry = fakeLighthouse(`process.exit(1);\n`);
+    const result = await createProcessRunner(entry)("https://example.com/");
+    expect(result).toEqual({ ok: false, error: "Lighthouse exited with code 1." });
   });
 
   test.each([
     ["the entry path", `process.argv[1]`],
     ["the node path", `process.execPath`],
     ["the home folder", JSON.stringify(homedir())],
-  ])("a stderr line that names %s is replaced by the fixed message", async (_name, expr) => {
+  ])("stderr naming %s gives the exit code only", async (_name, expr) => {
     const entry = fakeLighthouse(
       `console.error("failed in " + ${expr} + " badly"); process.exit(3);\n`,
     );
@@ -402,22 +417,25 @@ describe("createProcessRunner", () => {
     expect(result).toEqual({ ok: false, error: "Lighthouse exited with code 3." });
   });
 
-  test("only the first non-empty stderr line is used, capped at 200 characters", async () => {
-    const first = fakeLighthouse(
-      `console.error("\\n\\nfirst line\\nsecond line"); process.exit(1);\n`,
-    );
-    const one = await createProcessRunner(first)("https://example.com/");
-    expect(one).toEqual({ ok: false, error: "first line" });
-
-    const long = fakeLighthouse(`console.error("x".repeat(500)); process.exit(1);\n`);
-    const two = await createProcessRunner(long)("https://example.com/");
-    expect(two).toEqual({ ok: false, error: "x".repeat(200) });
+  test("a missing entry file gives the exit code only, with no path or URL", async () => {
+    const missing = join(tempDir(), "cli", "index.js");
+    const result = await createProcessRunner(missing)("https://example.com/");
+    expect(result).toEqual({ ok: false, error: "Lighthouse exited with code 1." });
   });
+
+  test.skipIf(process.platform === "win32")(
+    "a child stopped by a signal is reported as such",
+    async () => {
+      const entry = fakeLighthouse(`process.kill(process.pid, "SIGKILL");\n`);
+      const result = await createProcessRunner(entry)("https://example.com/");
+      expect(result).toEqual({ ok: false, error: "Lighthouse was stopped by a signal." });
+    },
+  );
 
   test("output that is not JSON is a failure", async () => {
     const entry = fakeLighthouse(`console.log("not json");\n`);
     const result = await createProcessRunner(entry)("https://example.com/");
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, error: "Lighthouse output could not be read." });
   });
 
   test("a script that outlives the timeout is stopped and reported as timed out", async () => {
@@ -542,5 +560,40 @@ describe("main with --lighthouse", () => {
     expect(parsed.lighthouse.pages).toEqual([]);
     expect(h.err()).toContain(LIGHTHOUSE_NOT_FOUND_NOTE);
     expect(h.err()).toContain("npm i -g lighthouse");
+  });
+});
+
+describe("failure text is never free text", () => {
+  const FIXED =
+    /^Lighthouse (exited with code \d+|timed out after \d+ seconds|reported a runtime error( \([A-Z0-9_]+\))?|could not be started|could not be run|output was too large|output could not be read|was stopped by a signal|returned no category scores)\.$/;
+
+  test("every failure path yields a fixed message even when the child and Lighthouse name local paths", async () => {
+    const dir = tempDir();
+    const leak = "C:\\Users\\Some Name\\chrome failed";
+    const noisy = (script: string): string =>
+      touch(join(dir, `${Math.random()}`, "cli", "index.js"), script);
+    const errors: string[] = [];
+    const record = async (runner: LighthouseRunner): Promise<void> => {
+      const section = await runLighthouse(["https://a.test/"], runner);
+      for (const page of section.pages) if (page.error !== null) errors.push(page.error);
+    };
+
+    await record(
+      createProcessRunner(noisy(`console.error(${JSON.stringify(leak)}); process.exit(2);\n`)),
+    );
+    await record(createProcessRunner(noisy(`console.log(${JSON.stringify(leak)});\n`)));
+    await record(createProcessRunner(noisy(`setInterval(() => {}, 1000);\n`), 300));
+    await record(createProcessRunner(join(dir, "missing", "cli", "index.js")));
+    await record(() => Promise.reject(new Error(leak)));
+    await record(okRunner({ runtimeError: { code: "NO_FCP", message: leak } }));
+    await record(okRunner({ runtimeError: { code: leak, message: leak } }));
+    await record(okRunner({ runtimeError: { message: leak } }));
+    await record(okRunner({ categories: {} }));
+
+    expect(errors).toHaveLength(9);
+    for (const error of errors) {
+      expect(error).toMatch(FIXED);
+      expect(error).not.toContain("Some Name");
+    }
   });
 });
