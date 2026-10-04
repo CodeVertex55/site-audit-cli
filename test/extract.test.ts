@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { exceedsNestingLimit, extractDocument, extractWithStatus } from "../src/crawl/extract.js";
+import {
+  extractDocument,
+  extractWithStatus,
+  MAX_DEPTH,
+  MAX_NODES,
+  parseBounded,
+} from "../src/crawl/extract.js";
 
 const URL0 = "https://site.example/dir/page";
 
@@ -717,6 +723,147 @@ describe("mixed content", () => {
   });
 });
 
+describe("documents without head or body", () => {
+  test("without a head element the first title outside svg is the title", () => {
+    const doc = extractDocument(
+      `<svg><title>Icon</title></svg><title> First  page </title><title>Second</title>`,
+      URL0,
+    );
+    expect(doc.title).toBe("First page");
+    expect(doc.titleCount).toBe(2);
+  });
+
+  test("with a head element only titles in head count", () => {
+    const doc = extractDocument(html("<title>In head</title>", "<title>In body</title>"), URL0);
+    expect(doc.title).toBe("In head");
+    expect(doc.titleCount).toBe(1);
+  });
+
+  test("without a head element, elements before the body are in head", () => {
+    const doc = extractDocument(
+      `<script src="/a.js"></script><link rel="stylesheet" href="/a.css"><link rel="canonical" href="/c"><body><script src="/b.js"></script><link rel="stylesheet" href="/b.css"></body>`,
+      URL0,
+    );
+    expect(doc.scripts.map((s) => s.inHead)).toEqual([true, false]);
+    expect(doc.stylesheets.map((s) => s.inHead)).toEqual([true, false]);
+    expect(doc.canonicals).toEqual(["https://site.example/c"]);
+  });
+
+  test("without head or body, elements before the first content element are in head", () => {
+    const doc = extractDocument(
+      `<html lang="en"><meta charset="utf-8"><title>T</title><script src="/a.js"></script><p>Hello world</p><script src="/b.js"></script><link rel="canonical" href="/late"></html>`,
+      URL0,
+    );
+    expect(doc.title).toBe("T");
+    expect(doc.lang).toBe("en");
+    expect(doc.scripts.map((s) => s.inHead)).toEqual([true, false]);
+    expect(doc.canonicals).toEqual([]);
+    expect(doc.wordCount).toBe(2);
+  });
+
+  test("without a body the whole document is counted, minus titles", () => {
+    const doc = extractDocument(
+      `<html><head><title>Not counted</title></head><p>one two</p><div>three</div></html>`,
+      URL0,
+    );
+    expect(doc.wordCount).toBe(3);
+  });
+
+  test("a head left open ends at the first content element", () => {
+    const doc = extractDocument(
+      `<html><head><title>T</title><link rel="stylesheet" href="/a.css"><p>words here</p><script src="/b.js"></script><link rel="canonical" href="/late">`,
+      URL0,
+    );
+    expect(doc.title).toBe("T");
+    expect(doc.stylesheets.map((s) => s.inHead)).toEqual([true]);
+    expect(doc.scripts.map((s) => s.inHead)).toEqual([false]);
+    expect(doc.canonicals).toEqual([]);
+    expect(doc.wordCount).toBe(2);
+  });
+
+  test("content of noscript, template and iframe is not indexed", () => {
+    const doc = extractDocument(
+      html(
+        `<noscript><link rel="stylesheet" href="/n.css"></noscript>`,
+        `<noscript><img src="/n.png"><a href="/n">n</a></noscript><template><a href="/t">t</a></template><iframe title="f"><a href="/i">i</a></iframe><a href="/real"><noscript><img src="/x.png" alt="X"></noscript></a><img src="/real.png">`,
+      ),
+      URL0,
+    );
+    expect(doc.images.map((i) => i.src)).toEqual(["/real.png"]);
+    expect(doc.links.map((l) => [l.href, l.hasAccessibleName])).toEqual([["/real", false]]);
+    expect(doc.stylesheets).toEqual([]);
+    expect(doc.iframes).toHaveLength(1);
+  });
+});
+
+describe("ordinary pages are read in full", () => {
+  test("a 200-item list", () => {
+    const body = `<ul>${'<li><a href="/item">item</a></li>'.repeat(200)}</ul>`;
+    const result = extractWithStatus(html("<title>List</title>", body), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.title).toBe("List");
+    expect(result.doc.links).toHaveLength(200);
+    expect(result.doc.wordCount).toBe(200);
+  });
+
+  test.each([
+    ["with tbody", (rows: string) => `<table><tbody>${rows}</tbody></table>`],
+    ["without tbody", (rows: string) => `<table>${rows}</table>`],
+  ])("a 500-row table %s", (_name, table) => {
+    const rows = '<tr><td><a href="/row">a</a></td><td>b</td></tr>'.repeat(500);
+    const result = extractWithStatus(html("", `${table(rows)}<a href="/after">after</a>`), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.links).toHaveLength(501);
+    expect(result.doc.wordCount).toBe(1001);
+  });
+
+  test("300 inline svg icons", () => {
+    const icon =
+      '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M0 0L16 16"/><path d="M16 0L0 16"/></svg>';
+    const body = `<ul>${`<li><a href="/x">${icon}label</a></li>`.repeat(300)}</ul><a href="/after">after</a>`;
+    const result = extractWithStatus(html("", body), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.links).toHaveLength(301);
+    expect(result.doc.links.every((l) => l.hasAccessibleName)).toBe(true);
+    expect(result.doc.wordCount).toBe(301);
+  });
+
+  test("an svg sprite with 300 symbols", () => {
+    const sprite = `<svg style="display:none">${'<symbol id="i" viewBox="0 0 16 16"><title>Icon</title><path d="M0 0L16 16"/></symbol>'.repeat(300)}</svg>`;
+    const body = `${sprite}<button><svg><use href="#i"/></svg></button><a href="/after">after</a>`;
+    const result = extractWithStatus(html("<title>Page</title>", body), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.titleCount).toBe(1);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/after"]);
+    expect(result.doc.buttons).toHaveLength(1);
+    expect(result.doc.wordCount).toBe(1);
+  });
+
+  test("a 5 MB page of 200000 flat paragraphs", () => {
+    const body = `${"<p>word</p>".repeat(200000)}<!-- ${"x".repeat(2_800_000)} --><a href="/end">end</a>`;
+    const started = Date.now();
+    const result = extractWithStatus(html("", body), URL0);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.wordCount).toBe(200001);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/end"]);
+  }, 20000);
+});
+
+type TreeLike = { type: string; children?: TreeLike[] };
+
+/** Deepest element in the parsed tree, root at 0, walked without recursion. */
+function elementDepth(root: TreeLike): number {
+  let deepest = 0;
+  const stack: [TreeLike, number][] = [[root, 0]];
+  for (let item = stack.pop(); item !== undefined; item = stack.pop()) {
+    const [node, depth] = item;
+    if (node.type !== "text" && node.type !== "comment" && depth > deepest) deepest = depth;
+    for (const child of node.children ?? []) stack.push([child, depth + 1]);
+  }
+  return deepest;
+}
+
 describe("hostile and broken markup", () => {
   test("does not throw", () => {
     for (const markup of [
@@ -737,91 +884,94 @@ describe("hostile and broken markup", () => {
     ).toBe(false);
   });
 
-  test("very deep nesting is bounded and keeps the content before the cap", () => {
+  test("very deep nesting stops at the depth limit and keeps the content before it", () => {
     const deep = `<title>Deep</title><a href="/before">before</a>${"<div>".repeat(300000)}<a href="/after">after</a>`;
     const started = Date.now();
-    const doc = extractDocument(html(deep), URL0);
+    const result = extractWithStatus(html(deep), URL0);
     expect(Date.now() - started).toBeLessThan(3000);
-    expect(doc.title).toBe("Deep");
-    expect(doc.links.map((l) => l.href)).toEqual(["/before"]);
+    expect(result.truncated).toBe(true);
+    expect(result.doc.title).toBe("Deep");
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/before"]);
   });
 
-  test("exceedsNestingLimit tells when the nesting guard would cut the page", () => {
-    expect(exceedsNestingLimit(html("", "<div>".repeat(3000)))).toBe(true);
-    expect(exceedsNestingLimit(html("", "<div>".repeat(900)))).toBe(false);
-    expect(exceedsNestingLimit(html("", "<li>item ".repeat(5000)))).toBe(false);
-    expect(exceedsNestingLimit("")).toBe(false);
-  });
-
-  test("moderately deep nesting is read in full", () => {
-    const body = `${"<div>".repeat(900)}<a href="/inside">inside</a>${"</div>".repeat(900)}`;
-    const doc = extractDocument(html("", body), URL0);
-    expect(doc.links).toHaveLength(1);
-    expect(doc.wordCount).toBe(1);
+  test("nesting just under the depth limit is read in full", () => {
+    const levels = MAX_DEPTH - 10;
+    const body = `${"<div>".repeat(levels)}<a href="/inside">inside</a>${"</div>".repeat(levels)}<a href="/after">after</a>`;
+    const result = extractWithStatus(html("", body), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/inside", "/after"]);
+    expect(result.doc.wordCount).toBe(2);
+    expect(extractWithStatus(html("", "<div>".repeat(MAX_DEPTH + 10)), URL0).truncated).toBe(true);
   });
 
   test("many unclosed paragraphs and list items are not mistaken for deep nesting", () => {
-    const body = `<ul>${"<li>item ".repeat(5000)}</ul><a href="/end">end</a>`;
-    const doc = extractDocument(html("", body), URL0);
-    expect(doc.links.map((l) => l.href)).toEqual(["/end"]);
+    const body = `<ul>${"<li>item ".repeat(5000)}</ul>${"<p>para ".repeat(5000)}<a href="/end">end</a>`;
+    const result = extractWithStatus(html("", body), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/end"]);
   });
 
-  test("tags written inside script text or comments do not count toward depth", () => {
+  test("tags written inside script text or comments are not elements", () => {
     const script = `<script>var s = "${"<div>".repeat(3000)}";</script><!-- ${"<div>".repeat(3000)} -->`;
-    const doc = extractDocument(html("", `${script}<a href="/ok">ok</a>`), URL0);
-    expect(doc.links.map((l) => l.href)).toEqual(["/ok"]);
+    const result = extractWithStatus(html("", `${script}<a href="/ok">ok</a>`), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/ok"]);
   });
 
-  test.each(["div", "span", "section", "a"])(
-    "<%s/> opens an element and counts toward depth",
-    (tag) => {
-      const markup = `<a href="/before">before</a>${`<${tag}/>`.repeat(100000)}<a href="/after">after</a>`;
-      const started = Date.now();
-      const doc = extractDocument(html("", markup), URL0);
-      expect(Date.now() - started).toBeLessThan(5000);
-      expect(exceedsNestingLimit(html("", markup))).toBe(true);
-      expect(doc.links.map((l) => l.href)).toEqual(["/before"]);
-    },
-  );
-
-  test("a script written as a self-closing tag still opens raw text in HTML", () => {
-    const divs = "<div>".repeat(3000);
-    expect(exceedsNestingLimit(html("", `<script/>${divs}</script>`))).toBe(false);
-    expect(exceedsNestingLimit(html("", `<script/></script>${divs}`))).toBe(true);
+  test.each(["div", "span", "section", "a"])("<%s/> opens an element in html", (tag) => {
+    const markup = `<a href="/before">before</a>${`<${tag}/>`.repeat(100000)}<a href="/after">after</a>`;
+    const started = Date.now();
+    const result = extractWithStatus(html("", markup), URL0);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.truncated).toBe(true);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/before"]);
   });
 
-  test("thousands of self-closing svg elements are not flagged or truncated", () => {
-    const paths = '<path d="M0 0"/>'.repeat(20000);
-    const markup = `<svg viewBox="0 0 1 1"><g>${paths}</g><circle r="1"/></svg><svg/><math><mi/></math><a href="/after">after</a>`;
-    expect(exceedsNestingLimit(html("", markup))).toBe(false);
-    const doc = extractDocument(html("", markup), URL0);
-    expect(doc.links.map((l) => l.href)).toEqual(["/after"]);
+  test("thousands of leaf svg elements in each valid spelling are not truncated", () => {
+    const spellings = [
+      '<path d="M0 0"/>',
+      '<path d="M0 0" />',
+      "<path/>",
+      "<path />",
+      "<path d='M0 0'/>",
+      "<path d=a />",
+    ];
+    for (const leaf of spellings) {
+      const markup = `<svg viewBox="0 0 1 1"><g>${leaf.repeat(20000)}</g><circle r="1"/></svg><svg/><math><mi/></math><a href="/after">after</a>`;
+      const result = extractWithStatus(html("", markup), URL0);
+      expect(result.truncated, leaf).toBe(false);
+      expect(result.doc.links.map((l) => l.href)).toEqual(["/after"]);
+    }
   });
 
-  test("html tags that break out of svg count as real elements even when self-closed", () => {
-    const markup = `<svg>${"<div/>".repeat(3000)}</svg><a href="/after">after</a>`;
-    expect(exceedsNestingLimit(html("", markup))).toBe(true);
-    const inMath = `<math>${"<span/>".repeat(3000)}</math>`;
-    expect(exceedsNestingLimit(html("", inMath))).toBe(true);
+  test("a page with many inline svg icons is not truncated", () => {
+    const icon = '<svg width="1" height="1"><g><path d="M0 0"/><circle r="1"/></g></svg>';
+    const markup = `<ul>${`<li><a href="/x">${icon}label</a>`.repeat(5000)}</ul>`;
+    const result = extractWithStatus(html("", markup), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.links).toHaveLength(5000);
   });
 
-  test("tags inside a foreign script are markup and count toward depth", () => {
-    const markup = `<svg><script>${"<div>".repeat(3000)}</script></svg>`;
-    expect(exceedsNestingLimit(html("", markup))).toBe(true);
+  test("an end tag closes the phrasing elements left open inside it", () => {
+    const result = extractWithStatus(html("", "<div><span><b>x</div>".repeat(5000)), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.wordCount).toBe(5000);
   });
 
   test("text reads stay flat when named elements are nested around large text", () => {
     const text = "word ".repeat(120000);
-    const buttons = `${'<div role="button">'.repeat(900)}${text}`;
-    const headings = `${"<h1><div>".repeat(450)}${text}`;
+    const levels = MAX_DEPTH - 10;
+    const buttons = `${'<div role="button">'.repeat(levels)}${text}`;
+    const headings = `${"<h1><div>".repeat(levels / 2)}${text}`;
     for (const body of [buttons, headings]) {
       const started = Date.now();
-      const doc = extractDocument(html("", body), URL0);
+      const result = extractWithStatus(html("", body), URL0);
       expect(Date.now() - started).toBeLessThan(5000);
-      expect(doc.wordCount).toBe(120000);
+      expect(result.truncated).toBe(false);
+      expect(result.doc.wordCount).toBe(120000);
     }
     const doc = extractDocument(html("", buttons), URL0);
-    expect(doc.buttons).toHaveLength(900);
+    expect(doc.buttons).toHaveLength(levels);
     expect(doc.buttons.every((b) => b.hasName)).toBe(true);
   });
 
@@ -834,7 +984,7 @@ describe("hostile and broken markup", () => {
   });
 
   test("an image with alt deep inside an otherwise empty link names it", () => {
-    const body = `<a href="/x">${"<span>".repeat(200)}<img src="/i.png" alt="Logo">${"</span>".repeat(200)}</a>`;
+    const body = `<a href="/x">${"<span>".repeat(100)}<img src="/i.png" alt="Logo">${"</span>".repeat(100)}</a>`;
     expect(extractDocument(html("", body), URL0).links[0]?.hasAccessibleName).toBe(true);
   });
 
@@ -843,78 +993,81 @@ describe("hostile and broken markup", () => {
     expect(doc.wordCount).toBe(4);
   });
 
-  // Hostile markup that must count as nesting. Each input is far past the cap if the guard counts
-  // every one of these tags as an open element.
-  const flaggedCases: [string, string][] = [
-    ["svg path with a solidus and a space", `<svg>${"<path / >".repeat(48000)}`],
-    ["svg path with an unquoted value ending in a solidus", `<svg>${"<path d=a/>".repeat(48000)}`],
-    ["svg path with a solidus after an equals sign", `<svg>${"<path d= />".repeat(48000)}`],
-    ["foreignObject section", `<svg><foreignObject>${"<section/>".repeat(48000)}`],
-    ["foreignObject article", `<svg><foreignObject>${"<article/>".repeat(48000)}`],
-    ["foreignObject form", `<svg><foreignObject>${"<form/>".repeat(48000)}`],
-    ["svg desc section", `<svg><desc>${"<section/>".repeat(48000)}`],
-    ["svg title section", `<svg><title>${"<section/>".repeat(48000)}`],
-    ["math annotation-xml section", `<math><annotation-xml>${"<section/>".repeat(48000)}`],
-    ["math text integration point", `<math><mi>${"<section/>".repeat(48000)}`],
+  // Hostile inputs. Each must finish fast, and is reported truncated when the parsed tree would
+  // otherwise be deeper than the limit.
+  const wrappedBlock = `${'<div role="button">'.repeat(900)}${"<b> </b>".repeat(20000)}${"</div>".repeat(900)}`;
+  const words = "word ".repeat(120000);
+  const hostileCases: [string, string, boolean][] = [
+    ["<div> x16000", "<div>".repeat(16000), true],
+    ["<div> x48000", "<div>".repeat(48000), true],
+    ["<div> x100000", "<div>".repeat(100000), true],
+    ["<div/> x16000", "<div/>".repeat(16000), true],
+    ["<div/> x48000", "<div/>".repeat(48000), true],
+    ["<div/> x100000", "<div/>".repeat(100000), true],
+    ["svg path with a solidus and a space", `<svg>${"<path / >".repeat(48000)}`, false],
     [
-      "bogus end tags between opens",
-      "<div>".repeat(900) + "</x>".repeat(900) + "<div>".repeat(300000),
+      "svg path with an unquoted value ending in a solidus",
+      `<svg>${"<path d=a/>".repeat(48000)}`,
+      true,
     ],
-    ["stray closers do not cancel opens", "<div></x>".repeat(48000)],
-    ["a table cell between open and close", "<div><table></div>".repeat(48000)],
+    ["foreignObject section", `<svg><foreignObject>${"<section/>".repeat(48000)}`, true],
+    ["svg desc section", `<svg><desc>${"<section/>".repeat(48000)}`, true],
+    ["math annotation-xml section", `<math><annotation-xml>${"<section/>".repeat(48000)}`, true],
+    ["div closed through foreignObject", "<div><svg><foreignObject></div>".repeat(48000), true],
+    ["a quote inside an unquoted value", `<div a=b=">${"<div>".repeat(48000)}">`, true],
+    ["xmp holding a comment opener", `<xmp><!--</xmp>${"<div>".repeat(48000)}`, true],
+    ["noscript holding a title", `<noscript><title></noscript>${"<div>".repeat(48000)}`, false],
+    ["iframe holding a title", `<iframe><title></iframe>${"<div>".repeat(48000)}`, false],
+    ["900 nested buttons around 20000 bold spaces, 8 times", wrappedBlock.repeat(8), true],
     [
-      "breakout then self-closed foreign-looking tags",
-      `<svg><div></div>${"<path/>".repeat(48000)}`,
+      "900 nested buttons around 600 KB of words",
+      `${'<div role="button">'.repeat(900)}${words}`,
+      true,
     ],
-    ["an svg left open by a mismatched close", `<svg><g></svg>${"<section/>".repeat(48000)}`],
-    ["a self-closed svg then html", `<svg/>${"<section/>".repeat(48000)}`],
-    ["comment that is closed at once", `<!-->${"<div>".repeat(48000)}`],
-    ["comment closed by a bang", `<!-- x --!>${"<div>".repeat(48000)}`],
-    ["name with a dot is not void", "<br.x>".repeat(48000)],
+    ["450 nested headings around 600 KB of words", `${"<h1><div>".repeat(450)}${words}`, true],
+    ["nested tables", "<table><tr><td>".repeat(20000), true],
+    ["nested lists", "<ul><li>".repeat(20000), true],
+    ["unclosed links", "<a href=x>".repeat(48000), true],
+    ["stray closers x48000", "<div></x>".repeat(48000), true],
+    ["stray closers x100000", "<div></x>".repeat(100000), true],
+    ["999 opens then 500000 stray closers", `${"<div>".repeat(999)}${"</x>".repeat(500000)}`, true],
+    ["self-closed svg roots", "<svg/>".repeat(48000), true],
   ];
 
-  test.each(flaggedCases)("the nesting guard counts: %s", (_name, markup) => {
-    const page = html("", `<a href="/before">before</a>${markup}<a href="/after">after</a>`);
+  test.each(hostileCases)("hostile input stays fast: %s", (_name, markup, truncated) => {
+    const page = html("", `<a href="/before">before</a>${markup}`);
+    const started = Date.now();
+    const result = extractWithStatus(page, URL0);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.truncated).toBe(truncated);
+    expect(result.doc.links[0]?.href).toBe("/before");
+    expect(elementDepth(parseBounded(page).root)).toBeLessThanOrEqual(MAX_DEPTH);
+  });
+
+  test("stray end tags at the deepest allowed nesting stay fast up to 5 MB", () => {
+    const opens = "<y>".repeat(MAX_DEPTH - 1);
+    for (const stray of ["</x>", "</z>", "</dib>"]) {
+      const page = opens + stray.repeat(Math.floor((5_000_000 - opens.length) / stray.length));
+      const started = Date.now();
+      const result = extractWithStatus(page, URL0);
+      expect(Date.now() - started, stray).toBeLessThan(5000);
+      expect(result.truncated).toBe(false);
+    }
+  }, 30000);
+
+  test("the node cap stops a 5 MB page of empty elements", () => {
+    const page = "<br>".repeat(1_250_000);
     const started = Date.now();
     const result = extractWithStatus(page, URL0);
     expect(Date.now() - started).toBeLessThan(5000);
     expect(result.truncated).toBe(true);
-    expect(exceedsNestingLimit(page)).toBe(true);
-    expect(result.doc.links.map((l) => l.href)).toEqual(["/before"]);
-  });
-
-  test("thousands of leaf svg elements in each valid spelling are not flagged", () => {
-    const spellings = [
-      '<path d="M0 0"/>',
-      '<path d="M0 0" />',
-      "<path/>",
-      "<path />",
-      "<path d='M0 0'/>",
-      "<path d=a />",
-    ];
-    for (const leaf of spellings) {
-      const markup = `<svg viewBox="0 0 1 1"><g>${leaf.repeat(20000)}</g></svg><a href="/after">after</a>`;
-      expect(exceedsNestingLimit(html("", markup)), leaf).toBe(false);
-      const doc = extractDocument(html("", markup), URL0);
-      expect(doc.links.map((l) => l.href)).toEqual(["/after"]);
-    }
-  });
-
-  test("a page with many inline svg icons is not flagged", () => {
-    const icon = '<svg width="1" height="1"><g><path d="M0 0"/><circle r="1"/></g></svg>';
-    const markup = `<ul>${`<li><a href="/x">${icon}label</a>`.repeat(5000)}</ul>`;
-    expect(exceedsNestingLimit(html("", markup))).toBe(false);
-  });
-
-  test("an end tag closes the matching element it passes through phrasing elements to reach", () => {
-    const markup = `<div><span><b>x</div>`.repeat(5000);
-    expect(exceedsNestingLimit(html("", markup))).toBe(false);
-  });
+    expect(parseBounded(page).root.children).toHaveLength(MAX_NODES);
+  }, 20000);
 
   test("a shared budget bounds repeated wrapper reads and reports the page as truncated", () => {
-    const block = `${'<div role="button">'.repeat(900)}${"<b> </b>".repeat(20000)}${"</div>".repeat(900)}`;
+    const block = `${'<div role="button">'.repeat(100)}${"<b> </b>".repeat(20000)}${"</div>".repeat(100)}`;
     const page = html("", block.repeat(8));
-    expect(exceedsNestingLimit(page)).toBe(false);
+    expect(parseBounded(page).truncated).toBe(false);
     const started = Date.now();
     const result = extractWithStatus(page, URL0);
     expect(Date.now() - started).toBeLessThan(5000);
@@ -929,12 +1082,13 @@ describe("hostile and broken markup", () => {
   });
 
   test("many nested labels around many controls stay fast", () => {
-    const markup = `${"<label>".repeat(900)}${'<input type="text">'.repeat(30000)}`;
+    const markup = `${"<label>".repeat(MAX_DEPTH - 10)}${'<input type="text">'.repeat(30000)}`;
     const started = Date.now();
-    const doc = extractDocument(html("", markup), URL0);
+    const result = extractWithStatus(html("", markup), URL0);
     expect(Date.now() - started).toBeLessThan(5000);
-    expect(doc.formControls).toHaveLength(30000);
-    expect(doc.formControls.every((c) => c.labelled)).toBe(true);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.formControls).toHaveLength(30000);
+    expect(result.doc.formControls.every((c) => c.labelled)).toBe(true);
   });
 
   test("an unparseable page url does not throw", () => {

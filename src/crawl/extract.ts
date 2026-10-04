@@ -1,4 +1,23 @@
-import { load, type Cheerio } from "cheerio";
+/*
+ * HTML to page facts. The audited HTML is hostile input, so it is parsed with htmlparser2, a
+ * streaming tokenizer with a plain open-element stack, and the parse stops at a fixed nesting
+ * depth or node count (see parseBounded). Every walk below is iterative.
+ *
+ * htmlparser2 does not create implied html, head or body elements, so the field rules read:
+ * - "In head" means inside a head element when the document has one. With no head element at
+ *   all, the first title outside svg is the title and titleCount counts titles outside svg.
+ * - Head content is html, head, title, meta, link, script, style, base and noscript. Scripts,
+ *   stylesheets and canonical links inside a head element count as in head only when they come
+ *   before the first element that is not head content, because a head left open does not hold
+ *   the page. With no head element they count as in head when they come before the first body
+ *   element or, with no body either, before the first element that is not head content.
+ * - wordCount reads the first body element when there is one, else the whole document without
+ *   title elements (script, style, noscript, template and svg are skipped as always).
+ * - Content of noscript, template, iframe, noembed, noframes and xmp is not indexed or read for
+ *   names. A browser running scripts treats it as text, never as elements.
+ */
+import type { Cheerio } from "cheerio";
+import { DomHandler, Parser, type Handler } from "htmlparser2";
 import type { ParsedDocument } from "../types.js";
 import { normaliseUrl, sameOrigin } from "./url.js";
 
@@ -183,6 +202,14 @@ function isScriptOrStyle(node: TreeNode): boolean {
   return node.type === "script" || node.type === "style";
 }
 
+// Elements whose content a browser running scripts reads as text, or keeps out of the document.
+const OPAQUE_TAGS = new Set(["noscript", "template", "iframe", "noembed", "noframes", "xmp"]);
+
+/** True for nodes whose children are not read for text or names. */
+function isOpaque(node: TreeNode): boolean {
+  return isScriptOrStyle(node) || (node.name !== undefined && OPAQUE_TAGS.has(node.name));
+}
+
 /**
  * Whitespace-collapsed visible text of an element, in document order, cut at TEXT_BUDGET
  * characters. Iterative, so deep markup cannot overflow the stack, and bounded in work.
@@ -211,7 +238,7 @@ function textPreview(el: El, budget: Budget): string {
           if (out.length >= TEXT_BUDGET) return out.slice(0, TEXT_BUDGET);
         }
       }
-    } else if (node.children !== undefined && !isScriptOrStyle(node)) {
+    } else if (node.children !== undefined && !isOpaque(node)) {
       for (let i = node.children.length - 1; i >= 0; i -= 1) {
         const child = node.children[i];
         if (child !== undefined) stack.push(child);
@@ -231,7 +258,7 @@ function containsImageWithAlt(el: El, budget: Budget): boolean {
     if (node.type === "tag" && node.name === "img" && (node.attribs?.alt ?? "").trim() !== "") {
       return true;
     }
-    if (node.children !== undefined) {
+    if (node.children !== undefined && !isOpaque(node)) {
       for (const child of node.children) stack.push(child);
     }
   }
@@ -239,6 +266,8 @@ function containsImageWithAlt(el: El, budget: Budget): boolean {
 }
 
 const WORD_SKIPPED_TAGS = new Set(["script", "style", "noscript", "template", "svg"]);
+// Without a body element the whole document is read, minus the text that only belongs in head.
+const WORD_SKIPPED_WITHOUT_BODY = new Set([...WORD_SKIPPED_TAGS, "title"]);
 
 const ELEMENT_END: TreeNode = { type: "element-end" };
 
@@ -247,7 +276,7 @@ const ELEMENT_END: TreeNode = { type: "element-end" };
  * textContent, and the start and end of every element break a word, so minified markup such as
  * `<p>one</p><p>two</p>` still counts two words.
  */
-function countWords(root: El): number {
+function countWords(root: TreeNode, skipped: Set<string>): number {
   let words = 0;
   let inWord = false;
   const stack: TreeNode[] = [...childrenOf(root)].reverse();
@@ -264,10 +293,7 @@ function countWords(root: El): number {
           words += 1;
         }
       }
-    } else if (
-      isScriptOrStyle(node) ||
-      (node.name !== undefined && WORD_SKIPPED_TAGS.has(node.name))
-    ) {
+    } else if (isScriptOrStyle(node) || (node.name !== undefined && skipped.has(node.name))) {
       inWord = false;
     } else if (node.children !== undefined) {
       inWord = false;
@@ -282,8 +308,12 @@ function countWords(root: El): number {
 }
 
 type TreeIndex = {
+  root: TreeNode;
   byTag: Map<string, El[]>;
   inHead: Set<El>; // elements under <head>
+  beforeBody: Set<El>; // scripts and links before the first <body>
+  beforeContent: Set<El>; // scripts and links before the first element that is not head content
+  titlesOutsideSvg: El[];
   insideLabel: Set<El>; // form controls under any <label>
   headings: El[];
   controls: El[]; // input, select and textarea
@@ -293,8 +323,21 @@ type TreeIndex = {
 
 const HEAD_END: TreeNode = { type: "head-end" };
 const LABEL_END: TreeNode = { type: "label-end" };
+const SVG_END: TreeNode = { type: "svg-end" };
 const SUBRESOURCE_TAGS = new Set(["img", "script", "link", "iframe", "video", "audio", "source"]);
 const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+// Elements that may come before the content of a page.
+const HEAD_CONTENT_TAGS = new Set([
+  "html",
+  "head",
+  "title",
+  "meta",
+  "link",
+  "script",
+  "style",
+  "base",
+  "noscript",
+]);
 
 /**
  * One pass over the tree, in document order, that sorts every element into the lists the
@@ -302,8 +345,12 @@ const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
  */
 function indexTree(root: TreeNode): TreeIndex {
   const index: TreeIndex = {
+    root,
     byTag: new Map(),
     inHead: new Set(),
+    beforeBody: new Set(),
+    beforeContent: new Set(),
+    titlesOutsideSvg: [],
     insideLabel: new Set(),
     headings: [],
     controls: [],
@@ -312,6 +359,9 @@ function indexTree(root: TreeNode): TreeIndex {
   };
   let headDepth = 0;
   let labelDepth = 0;
+  let svgDepth = 0;
+  let seenBody = false;
+  let seenContent = false;
   const stack: TreeNode[] = [...childrenOf(root)].reverse();
   for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
     if (node === HEAD_END) {
@@ -322,6 +372,10 @@ function indexTree(root: TreeNode): TreeIndex {
       labelDepth -= 1;
       continue;
     }
+    if (node === SVG_END) {
+      svgDepth -= 1;
+      continue;
+    }
     const name = node.name;
     if (name === undefined || node.children === undefined) continue;
     // Elements are the tag, script and style nodes, the only ones that carry a name.
@@ -330,6 +384,13 @@ function indexTree(root: TreeNode): TreeIndex {
     if (sameTag === undefined) index.byTag.set(name, [el]);
     else sameTag.push(el);
     if (headDepth > 0) index.inHead.add(el);
+    if (name === "script" || name === "link") {
+      if (!seenBody) index.beforeBody.add(el);
+      if (!seenContent) index.beforeContent.add(el);
+    }
+    if (name === "body") seenBody = true;
+    if (!HEAD_CONTENT_TAGS.has(name)) seenContent = true;
+    if (name === "title" && svgDepth === 0) index.titlesOutsideSvg.push(el);
     if (HEADING_TAGS.has(name)) index.headings.push(el);
     if (SUBRESOURCE_TAGS.has(name)) index.subresources.push(el);
     if (name === "button" || node.attribs?.role === "button") index.buttons.push(el);
@@ -337,12 +398,16 @@ function indexTree(root: TreeNode): TreeIndex {
       index.controls.push(el);
       if (labelDepth > 0) index.insideLabel.add(el);
     }
+    if (OPAQUE_TAGS.has(name)) continue;
     if (name === "head") {
       headDepth += 1;
       stack.push(HEAD_END);
     } else if (name === "label") {
       labelDepth += 1;
       stack.push(LABEL_END);
+    } else if (name === "svg") {
+      svgDepth += 1;
+      stack.push(SVG_END);
     }
     for (let i = node.children.length - 1; i >= 0; i -= 1) {
       const child = node.children[i];
@@ -352,322 +417,132 @@ function indexTree(root: TreeNode): TreeIndex {
   return index;
 }
 
-/** Text of a script element, which only holds text nodes. */
-function scriptText(el: El): string {
-  return childrenOf(el)
-    .map((node) => (node.type === "text" ? (node.data ?? "") : ""))
-    .join("");
-}
-
-const VOID_TAGS = new Set([
-  "area",
-  "base",
-  "basefont",
-  "br",
-  "col",
-  "embed",
-  "frame",
-  "hr",
-  "img",
-  "input",
-  "keygen",
-  "link",
-  "meta",
-  "param",
-  "source",
-  "track",
-  "wbr",
-]);
-// Tags whose end tag may be left out. In HTML content they are not counted, because they close
-// each other and the elements that hold them (table, ul, select, ruby) are counted instead.
-const AUTO_CLOSING_TAGS = new Set([
-  "html",
-  "head",
-  "body",
-  "p",
-  "li",
-  "dt",
-  "dd",
-  "tr",
-  "td",
-  "th",
-  "thead",
-  "tbody",
-  "tfoot",
-  "colgroup",
-  "option",
-  "optgroup",
-  "rb",
-  "rt",
-  "rtc",
-  "rp",
-]);
-const RAW_TEXT_TAGS = new Set(["script", "style", "textarea", "title"]);
-const FOREIGN_ROOTS = new Set(["svg", "math"]);
-// Foreign elements whose children are parsed as HTML.
-const INTEGRATION_POINTS = new Set([
-  "foreignobject",
-  "desc",
-  "title",
-  "annotation-xml",
+// Parse limits. The parser compares every end tag it cannot match with each open element, so the
+// worst case costs MAX_DEPTH comparisons per end tag. At 128 the slowest 5 MB page of stray end
+// tags measured stays under 2 seconds. MAX_NODES sits above large ordinary pages (200000 flat
+// paragraphs are 400000 nodes) and bounds time and memory for hostile ones.
+export const MAX_DEPTH = 128;
+export const MAX_NODES = 500_000;
+// Elements that make htmlparser2 record a foreign-content entry. It drops the entry only on an
+// explicit end tag of the same name, so implied closes of these elements leave entries behind.
+const FOREIGN_CONTEXT_TAGS = new Set([
+  "svg",
+  "math",
   "mi",
   "mo",
   "mn",
   "ms",
   "mtext",
+  "annotation-xml",
+  "foreignobject",
+  "desc",
+  "title",
 ]);
-// HTML tags that end foreign (svg or math) content when they appear inside it.
-const FOREIGN_BREAKOUT_TAGS = new Set([
-  "b",
-  "big",
-  "blockquote",
-  "body",
-  "br",
-  "center",
-  "code",
-  "dd",
-  "div",
-  "dl",
-  "dt",
-  "em",
-  "embed",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "head",
-  "hr",
-  "i",
-  "img",
-  "li",
-  "listing",
-  "menu",
-  "meta",
-  "nobr",
-  "ol",
-  "p",
-  "pre",
-  "ruby",
-  "s",
-  "small",
-  "span",
-  "strong",
-  "strike",
-  "sub",
-  "sup",
-  "table",
-  "tt",
-  "u",
-  "ul",
-  "var",
-  "font",
-]);
-// Phrasing elements an end tag may close through. Anything else blocks the match, so the scan
-// leaves the element counted as open (an over-count is safe, an under-count is not).
-const TRANSPARENT_TAGS = new Set([
-  "a",
-  "abbr",
-  "b",
-  "bdi",
-  "bdo",
-  "big",
-  "cite",
-  "code",
-  "data",
-  "del",
-  "dfn",
-  "em",
-  "font",
-  "i",
-  "ins",
-  "kbd",
-  "label",
-  "mark",
-  "nobr",
-  "q",
-  "s",
-  "samp",
-  "small",
-  "span",
-  "strike",
-  "strong",
-  "sub",
-  "sup",
-  "time",
-  "tt",
-  "u",
-  "var",
-]);
-const MAX_NESTING_DEPTH = 1000;
-const END_TAG_SCAN = 32;
-const ROOT_END_TAG_SCAN = MAX_NESTING_DEPTH + 1;
-const FOREIGN_ELEMENT = 1; // the element itself is svg or math content
-const FOREIGN_CHILDREN = 2; // its children are svg or math content
-
-function isLetter(code: number): boolean {
-  return (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
-}
-
-function isSpace(code: number): boolean {
-  return code === 32 || code === 9 || code === 10 || code === 12 || code === 13;
-}
-
-function matchesAt(text: string, index: number, word: string): boolean {
-  if (index + word.length > text.length) return false;
-  for (let i = 0; i < word.length; i += 1) {
-    if ((text.charCodeAt(index + i) | 0x20) !== word.charCodeAt(i)) return false;
-  }
-  return true;
-}
 
 /**
- * Index of the ">" that ends the tag whose name ends at `from`, and whether the tag is a leaf
- * in foreign content. `leaf` is true only for a "/>" that the HTML tokenizer certainly reads as
- * a self-closing flag: the slash is right before ">" and follows the tag name, whitespace that
- * does not come after "=", or the closing quote of a quoted value.
- */
-function tagEnd(html: string, from: number): { end: number; leaf: boolean } {
-  let quote = 0;
-  let previous = 0; // last non-space character outside quotes
-  let beforeSlash = 0;
-  let quoteClosedAt = -1;
-  for (let i = from; i < html.length; i += 1) {
-    const code = html.charCodeAt(i);
-    if (quote !== 0) {
-      if (code === quote) {
-        quote = 0;
-        previous = code;
-        quoteClosedAt = i;
-      }
-    } else if ((code === 34 || code === 39) && previous === 61) {
-      quote = code;
-    } else if (code === 62) {
-      if (i === from || html.charCodeAt(i - 1) !== 47) return { end: i, leaf: false };
-      if (i - 1 === from) return { end: i, leaf: true };
-      const gap = html.charCodeAt(i - 2);
-      const leaf = isSpace(gap)
-        ? beforeSlash !== 61
-        : (gap === 34 || gap === 39) && quoteClosedAt === i - 2;
-      return { end: i, leaf };
-    } else if (!isSpace(code)) {
-      if (code === 47) beforeSlash = previous;
-      previous = code;
-    }
-  }
-  return { end: html.length, leaf: false };
-}
-
-/** Index just past the end of the comment that starts at `start`, or -1 when it never ends. */
-function commentEnd(html: string, start: number): number {
-  // "<!-->" and "<!--->" are complete comments.
-  if (html.charCodeAt(start + 4) === 62) return start + 5;
-  if (html.startsWith("->", start + 4)) return start + 6;
-  let at = html.indexOf("--", start + 4);
-  while (at !== -1) {
-    const next = html.charCodeAt(at + 2);
-    if (next === 62) return at + 3;
-    if (next === 33 && html.charCodeAt(at + 3) === 62) return at + 4;
-    at = html.indexOf("--", at + 1);
-  }
-  return -1;
-}
-
-/**
- * Parsing and querying cost grows quickly with element depth, and the parser's recursion limits
- * are not ours to tune. Real pages are far shallower than the cap. When a document nests deeper,
- * only the part before the cap is kept.
+ * Parse HTML into a domhandler tree, stopping at MAX_DEPTH open elements or MAX_NODES nodes.
  *
- * The scan computes an upper bound on the real nesting depth, in one linear pass without regular
- * expressions. It does not copy the HTML parser. Whenever it is unsure that a start tag leaves
- * the element open, it counts the tag as open, and an end tag only closes an element it matches
- * by name. An over-count flags an unusual page, an under-count would let hostile markup through.
+ * The parser's per-tag work grows with the number of open elements, so an unbounded depth makes
+ * parsing quadratic. The handler below counts open elements from the parser's own open and close
+ * events (void elements and implied closes fire both), and when the next open tag would pass a
+ * limit it pauses the parser for good. Everything after that point is dropped. Elements of
+ * FOREIGN_CONTEXT_TAGS that are left open without an explicit end tag are counted the same way,
+ * since the parser keeps an entry for each of them.
  */
-function limitNesting(html: string): string {
-  const names: string[] = [];
-  const flags: number[] = [];
-  const inForeign = (): boolean => ((flags[flags.length - 1] ?? 0) & FOREIGN_CHILDREN) !== 0;
-  let i = html.indexOf("<");
-  while (i !== -1 && i < html.length - 1) {
-    const next = html.charCodeAt(i + 1);
-    if (next === 33 && html.startsWith("<!--", i)) {
-      const end = commentEnd(html, i);
-      i = end === -1 ? -1 : html.indexOf("<", end);
-      continue;
-    }
-    const closing = next === 47;
-    const nameStart = closing ? i + 2 : i + 1;
-    if (!isLetter(html.charCodeAt(nameStart))) {
-      i = html.indexOf("<", i + 1);
-      continue;
-    }
-    // A tag name runs to whitespace, "/" or ">".
-    let nameEnd = nameStart;
-    while (nameEnd < html.length) {
-      const code = html.charCodeAt(nameEnd);
-      if (isSpace(code) || code === 47 || code === 62) break;
-      nameEnd += 1;
-    }
-    const name = html.slice(nameStart, nameEnd).toLowerCase();
-    const { end, leaf } = tagEnd(html, nameEnd);
-    let resume = end + 1;
-
-    if (closing) {
-      if (!AUTO_CLOSING_TAGS.has(name) && !VOID_TAGS.has(name)) {
-        const limit = FOREIGN_ROOTS.has(name) ? ROOT_END_TAG_SCAN : END_TAG_SCAN;
-        for (let k = names.length - 1, steps = 0; k >= 0 && steps < limit; k -= 1, steps += 1) {
-          if (names[k] === name) {
-            names.length = k;
-            flags.length = k;
-            break;
-          }
-          const foreignElement = ((flags[k] ?? 0) & FOREIGN_ELEMENT) !== 0;
-          if (!foreignElement && !TRANSPARENT_TAGS.has(names[k] ?? "")) break;
-        }
+export function parseBounded(html: string): { root: TreeNode; truncated: boolean } {
+  const dom = new DomHandler();
+  let parser: Parser | null = null;
+  let depth = 0;
+  let foreignOpen = 0;
+  let nodes = 0;
+  let inText = false; // the handler merges adjacent text events into one node
+  let stopped = false;
+  const stop = (): void => {
+    stopped = true;
+    parser?.pause();
+  };
+  const addNode = (): boolean => {
+    nodes += 1;
+    if (nodes > MAX_NODES) stop();
+    return !stopped;
+  };
+  const handler: Partial<Handler> = {
+    onparserinit: (instance) => dom.onparserinit(instance),
+    onopentag: (name, attribs) => {
+      if (stopped) return;
+      const foreign = FOREIGN_CONTEXT_TAGS.has(name);
+      if (depth >= MAX_DEPTH || (foreign && foreignOpen >= MAX_DEPTH)) {
+        stop();
+        return;
       }
-    } else {
-      if (inForeign() && FOREIGN_BREAKOUT_TAGS.has(name)) {
-        // The parser leaves svg or math content here, back to the nearest HTML context.
-        while (names.length > 0 && inForeign()) {
-          names.pop();
-          flags.pop();
-        }
-      }
-      if (inForeign()) {
-        if (!leaf) {
-          names.push(name);
-          flags.push(FOREIGN_ELEMENT + (INTEGRATION_POINTS.has(name) ? 0 : FOREIGN_CHILDREN));
-        }
-      } else if (VOID_TAGS.has(name) || AUTO_CLOSING_TAGS.has(name)) {
-        // Not counted in HTML content.
-      } else if (FOREIGN_ROOTS.has(name)) {
-        if (!leaf) {
-          names.push(name);
-          flags.push(FOREIGN_ELEMENT + FOREIGN_CHILDREN);
-        }
-      } else {
-        // In HTML content a "/>" is ignored, so every other start tag opens an element.
-        names.push(name);
-        flags.push(0);
-        if (RAW_TEXT_TAGS.has(name)) {
-          let close = html.indexOf("</", resume);
-          while (close !== -1 && !matchesAt(html, close + 2, name))
-            close = html.indexOf("</", close + 2);
-          if (close === -1) return html;
-          resume = close;
-        }
-      }
-      if (names.length > MAX_NESTING_DEPTH) return html.slice(0, i);
-    }
-    i = html.indexOf("<", resume);
+      if (!addNode()) return;
+      depth += 1;
+      if (foreign) foreignOpen += 1;
+      inText = false;
+      dom.onopentag(name, attribs);
+    },
+    onclosetag: (name, isImplied) => {
+      // When input ends inside a start tag, the parser closes that tag too although it never
+      // sent an open event for it. That one extra close arrives last, at depth 0, and is ignored.
+      if (stopped || depth === 0) return;
+      depth -= 1;
+      if (!isImplied && foreignOpen > 0 && FOREIGN_CONTEXT_TAGS.has(name)) foreignOpen -= 1;
+      inText = false;
+      dom.onclosetag();
+    },
+    ontext: (data) => {
+      if (stopped || (!inText && !addNode())) return;
+      inText = true;
+      dom.ontext(data);
+    },
+    oncomment: (data) => {
+      if (stopped || !addNode()) return;
+      inText = false;
+      dom.oncomment(data);
+    },
+    oncommentend: () => {
+      if (!stopped) dom.oncommentend();
+    },
+    oncdatastart: () => {
+      if (stopped || !addNode()) return;
+      inText = true;
+      dom.oncdatastart();
+    },
+    oncdataend: () => {
+      if (stopped) return;
+      inText = false;
+      dom.oncdataend();
+    },
+    onprocessinginstruction: (name, data) => {
+      if (stopped || !addNode()) return;
+      inText = false;
+      dom.onprocessinginstruction(name, data);
+    },
+    onend: () => {
+      if (!stopped) dom.onend();
+    },
+  };
+  parser = new Parser(handler, {
+    xmlMode: false,
+    decodeEntities: true,
+    lowerCaseTags: true,
+    lowerCaseAttributeNames: true,
+    recognizeSelfClosing: false,
+  });
+  parser.end(html);
+  if (stopped) {
+    // A paused parser never ends, so close what is open and finish the handler here.
+    for (; depth > 0; depth -= 1) dom.onclosetag();
+    dom.onend();
   }
-  return html;
+  return { root: dom.root as unknown as TreeNode, truncated: stopped };
 }
 
-/** True when `extractDocument` would cut this HTML at the nesting cap. */
-export function exceedsNestingLimit(html: string): boolean {
-  return limitNesting(html).length < html.length;
+/** Text of a script element, which only holds text nodes. */
+function scriptText(el: El): string {
+  return childrenOf(el)
+    .map((node) => (node.type === "text" ? (node.data ?? "") : ""))
+    .join("");
 }
 
 function describeElement(el: El, attributes: string[]): string {
@@ -700,20 +575,18 @@ export function extractDocument(
 
 /**
  * Same as `extractDocument`, and also says whether the facts are partial: `truncated` is true
- * when the HTML was cut at the nesting cap or the shared text-read budget ran out, in which case
- * some names and previews were decided from attributes only.
+ * when the parse stopped at the depth or node limit (the rest of the page is missing) or the shared
+ * text-read budget ran out (some names and previews were decided from attributes only).
  */
 export function extractWithStatus(
   html: string,
   pageUrl: string,
   headers: Record<string, string> = {},
 ): { doc: ParsedDocument; truncated: boolean } {
-  const limited = limitNesting(html);
+  const parsed = parseBounded(html);
   const budget: Budget = { visits: 0, exhausted: false };
-  const rootNode = load(limited).root().get(0) as unknown as TreeNode | undefined;
-  const tree = indexTree(rootNode ?? { type: "root", children: [] });
-  const doc = extractFacts(tree, pageUrl, headers, budget);
-  return { doc, truncated: limited.length < html.length || budget.exhausted };
+  const doc = extractFacts(indexTree(parsed.root), pageUrl, headers, budget);
+  return { doc, truncated: parsed.truncated || budget.exhausted };
 }
 
 function extractFacts(
@@ -738,11 +611,19 @@ function extractFacts(
   const resolve = (href: string | undefined): string | null =>
     href === undefined || href.trim() === "" ? null : normaliseUrl(href, base);
 
-  const headElements = tree.inHead;
   const all = (tag: string): El[] => tree.byTag.get(tag) ?? [];
+  // Without a head element, head content is what comes before the body or the first content.
+  const hasHead = all("head").length > 0;
+  const hasBody = all("body").length > 0;
+  const inHead = (el: El): boolean => {
+    if (hasHead) return tree.inHead.has(el) && tree.beforeContent.has(el);
+    return hasBody ? tree.beforeBody.has(el) : tree.beforeContent.has(el);
+  };
 
   // Title.
-  const titles = all("title").filter((el) => (el.parent as TreeNode | null)?.name === "head");
+  const titles = hasHead
+    ? all("title").filter((el) => (el.parent as TreeNode | null)?.name === "head")
+    : tree.titlesOutsideSvg;
   const firstTitle = titles[0];
   const titleText = firstTitle === undefined ? "" : textOf(firstTitle);
 
@@ -773,7 +654,7 @@ function extractFacts(
   for (const el of linkElements) {
     const rel = relTokens(el);
     if (rel.some((token) => token.includes("icon"))) iconLink = true;
-    if (rel.includes("canonical") && headElements.has(el)) {
+    if (rel.includes("canonical") && inHead(el)) {
       const url = resolve(attrOf(el, "href"));
       if (url !== null) canonicals.push(url);
     }
@@ -783,7 +664,7 @@ function extractFacts(
         const media = (attrOf(el, "media") ?? "").trim();
         stylesheets.push({
           url,
-          inHead: headElements.has(el),
+          inHead: inHead(el),
           media: media === "" ? null : media,
         });
       }
@@ -808,7 +689,7 @@ function extractFacts(
     const src = attrOf(el, "src");
     scripts.push({
       url: resolve(src),
-      inHead: headElements.has(el),
+      inHead: inHead(el),
       async: attrOf(el, "async") !== undefined,
       defer: attrOf(el, "defer") !== undefined,
       module: type === "module",
@@ -917,7 +798,10 @@ function extractFacts(
   }
 
   const bodyElement = all("body")[0];
-  const wordCount = bodyElement === undefined ? 0 : countWords(bodyElement);
+  const wordCount =
+    bodyElement === undefined
+      ? countWords(tree.root, WORD_SKIPPED_WITHOUT_BODY)
+      : countWords(bodyElement as unknown as TreeNode, WORD_SKIPPED_TAGS);
 
   return {
     title: titleText === "" ? null : titleText,

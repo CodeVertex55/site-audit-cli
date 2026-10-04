@@ -44,10 +44,12 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "coverage": "vitest run --coverage"
+    "coverage": "vitest run --coverage",
+    "docs:checks": "tsx scripts/gen-checks-doc.ts"
   },
   "dependencies": {
-    "cheerio": "^1.2.0"
+    "cheerio": "^1.2.0",
+    "htmlparser2": "^10.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
