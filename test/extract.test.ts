@@ -640,6 +640,22 @@ describe("word count", () => {
     expect(doc.wordCount).toBe(5);
   });
 
+  test("minified block elements count as separate words", () => {
+    expect(extractDocument(html("", "<p>one</p><p>two</p>"), URL0).wordCount).toBe(2);
+    expect(
+      extractDocument(html("", "<div>a</div><div>b</div><ul><li>c</li><li>d</li></ul>"), URL0)
+        .wordCount,
+    ).toBe(4);
+    expect(extractDocument(html("", "<p>hel<b>lo</b></p>"), URL0).wordCount).toBe(2);
+    expect(extractDocument(html("", "<p>a<br>b</p>"), URL0).wordCount).toBe(2);
+  });
+
+  test("whitespace and empty elements do not add words", () => {
+    expect(
+      extractDocument(html("", "<p> </p><div></div><span>x</span><p></p>"), URL0).wordCount,
+    ).toBe(1);
+  });
+
   test("empty and missing bodies are zero", () => {
     expect(extractDocument("", URL0).wordCount).toBe(0);
     expect(extractDocument(html(""), URL0).wordCount).toBe(0);
@@ -806,9 +822,9 @@ describe("hostile and broken markup", () => {
     expect(extractDocument(html("", body), URL0).links[0]?.hasAccessibleName).toBe(true);
   });
 
-  test("words split across inline elements count as in the rendered text", () => {
+  test("an element boundary breaks a word, inline elements included", () => {
     const doc = extractDocument(html("", "<p>one<b>two</b> three four</p>"), URL0);
-    expect(doc.wordCount).toBe(3);
+    expect(doc.wordCount).toBe(4);
   });
 
   test("an unparseable page url does not throw", () => {

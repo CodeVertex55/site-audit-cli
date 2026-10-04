@@ -211,13 +211,21 @@ function containsImageWithAlt(el: El): boolean {
 
 const WORD_SKIPPED_TAGS = new Set(["script", "style", "noscript", "template", "svg"]);
 
-/** Words in the visible text under `root`, in one pass. Adjacent text nodes join as in textContent. */
+const ELEMENT_END: TreeNode = { type: "element-end" };
+
+/**
+ * Words in the visible text under `root`, in one pass. Adjacent text nodes join as in
+ * textContent, and the start and end of every element break a word, so minified markup such as
+ * `<p>one</p><p>two</p>` still counts two words.
+ */
 function countWords(root: El): number {
   let words = 0;
   let inWord = false;
-  const stack: TreeNode[] = [...childrenOf(root)];
+  const stack: TreeNode[] = [...childrenOf(root)].reverse();
   for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
-    if (node.type === "text") {
+    if (node === ELEMENT_END) {
+      inWord = false;
+    } else if (node.type === "text") {
       const data = node.data ?? "";
       for (let k = 0; k < data.length; k += 1) {
         if (isWhitespace(data.charAt(k))) {
@@ -229,6 +237,8 @@ function countWords(root: El): number {
       }
     } else if (node.children !== undefined && !isScriptOrStyle(node)) {
       if (node.name !== undefined && WORD_SKIPPED_TAGS.has(node.name)) continue;
+      inWord = false;
+      stack.push(ELEMENT_END);
       for (let i = node.children.length - 1; i >= 0; i -= 1) {
         const child = node.children[i];
         if (child !== undefined) stack.push(child);
