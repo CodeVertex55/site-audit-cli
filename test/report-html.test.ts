@@ -105,6 +105,9 @@ describe("renderHtml document", () => {
     expect(css).toContain("@media print");
     expect(css).toContain("overflow-wrap: anywhere");
     expect(css).toContain("details > *:not(summary)");
+    expect(css).toMatch(
+      /@media print[\s\S]*details::details-content\s*{\s*content-visibility:\s*visible;\s*display:\s*block;\s*}/,
+    );
     expect(css).toMatch(/:root\s*{[^}]*--accent:/);
   });
 

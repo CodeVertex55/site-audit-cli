@@ -488,6 +488,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
   .sev, .notice { background: none; }
   .table-wrap { overflow: visible; }
   details > *:not(summary) { display: block; }
+  details::details-content { content-visibility: visible; display: block; }
   summary::before { display: none; }
   details.check, tr { break-inside: avoid; }
   h2, h3 { break-after: avoid; }
