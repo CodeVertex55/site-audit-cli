@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { exceedsNestingLimit, extractDocument } from "../src/crawl/extract.js";
+import { exceedsNestingLimit, extractDocument, extractWithStatus } from "../src/crawl/extract.js";
 
 const URL0 = "https://site.example/dir/page";
 
@@ -106,6 +106,13 @@ describe("robots directives", () => {
       "x-robots-tag": "googlebot-news: noindex, nosnippet",
     });
     expect(doc.metaRobots).toEqual([]);
+  });
+
+  test("an unavailable_after date without a time leaves no stray directive", () => {
+    const doc = extractDocument(html(""), URL0, {
+      "x-robots-tag": "unavailable_after: Sat, 25 Jun 2030, noindex",
+    });
+    expect(doc.metaRobots).toEqual(["noindex"]);
   });
 
   test("no robots information gives an empty list", () => {
@@ -825,6 +832,100 @@ describe("hostile and broken markup", () => {
   test("an element boundary breaks a word, inline elements included", () => {
     const doc = extractDocument(html("", "<p>one<b>two</b> three four</p>"), URL0);
     expect(doc.wordCount).toBe(4);
+  });
+
+  // Hostile markup that must count as nesting. Each input is far past the cap if the guard counts
+  // every one of these tags as an open element.
+  const flaggedCases: [string, string][] = [
+    ["svg path with a solidus and a space", `<svg>${"<path / >".repeat(48000)}`],
+    ["svg path with an unquoted value ending in a solidus", `<svg>${"<path d=a/>".repeat(48000)}`],
+    ["svg path with a solidus after an equals sign", `<svg>${"<path d= />".repeat(48000)}`],
+    ["foreignObject section", `<svg><foreignObject>${"<section/>".repeat(48000)}`],
+    ["foreignObject article", `<svg><foreignObject>${"<article/>".repeat(48000)}`],
+    ["foreignObject form", `<svg><foreignObject>${"<form/>".repeat(48000)}`],
+    ["svg desc section", `<svg><desc>${"<section/>".repeat(48000)}`],
+    ["svg title section", `<svg><title>${"<section/>".repeat(48000)}`],
+    ["math annotation-xml section", `<math><annotation-xml>${"<section/>".repeat(48000)}`],
+    ["math text integration point", `<math><mi>${"<section/>".repeat(48000)}`],
+    [
+      "bogus end tags between opens",
+      "<div>".repeat(900) + "</x>".repeat(900) + "<div>".repeat(300000),
+    ],
+    ["stray closers do not cancel opens", "<div></x>".repeat(48000)],
+    ["a table cell between open and close", "<div><table></div>".repeat(48000)],
+    [
+      "breakout then self-closed foreign-looking tags",
+      `<svg><div></div>${"<path/>".repeat(48000)}`,
+    ],
+    ["an svg left open by a mismatched close", `<svg><g></svg>${"<section/>".repeat(48000)}`],
+    ["a self-closed svg then html", `<svg/>${"<section/>".repeat(48000)}`],
+    ["comment that is closed at once", `<!-->${"<div>".repeat(48000)}`],
+    ["comment closed by a bang", `<!-- x --!>${"<div>".repeat(48000)}`],
+    ["name with a dot is not void", "<br.x>".repeat(48000)],
+  ];
+
+  test.each(flaggedCases)("the nesting guard counts: %s", (_name, markup) => {
+    const page = html("", `<a href="/before">before</a>${markup}<a href="/after">after</a>`);
+    const started = Date.now();
+    const result = extractWithStatus(page, URL0);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.truncated).toBe(true);
+    expect(exceedsNestingLimit(page)).toBe(true);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/before"]);
+  });
+
+  test("thousands of leaf svg elements in each valid spelling are not flagged", () => {
+    const spellings = [
+      '<path d="M0 0"/>',
+      '<path d="M0 0" />',
+      "<path/>",
+      "<path />",
+      "<path d='M0 0'/>",
+      "<path d=a />",
+    ];
+    for (const leaf of spellings) {
+      const markup = `<svg viewBox="0 0 1 1"><g>${leaf.repeat(20000)}</g></svg><a href="/after">after</a>`;
+      expect(exceedsNestingLimit(html("", markup)), leaf).toBe(false);
+      const doc = extractDocument(html("", markup), URL0);
+      expect(doc.links.map((l) => l.href)).toEqual(["/after"]);
+    }
+  });
+
+  test("a page with many inline svg icons is not flagged", () => {
+    const icon = '<svg width="1" height="1"><g><path d="M0 0"/><circle r="1"/></g></svg>';
+    const markup = `<ul>${`<li><a href="/x">${icon}label</a>`.repeat(5000)}</ul>`;
+    expect(exceedsNestingLimit(html("", markup))).toBe(false);
+  });
+
+  test("an end tag closes the matching element it passes through phrasing elements to reach", () => {
+    const markup = `<div><span><b>x</div>`.repeat(5000);
+    expect(exceedsNestingLimit(html("", markup))).toBe(false);
+  });
+
+  test("a shared budget bounds repeated wrapper reads and reports the page as truncated", () => {
+    const block = `${'<div role="button">'.repeat(900)}${"<b> </b>".repeat(20000)}${"</div>".repeat(900)}`;
+    const page = html("", block.repeat(8));
+    expect(exceedsNestingLimit(page)).toBe(false);
+    const started = Date.now();
+    const result = extractWithStatus(page, URL0);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.truncated).toBe(true);
+  });
+
+  test("a document that stays inside the budget is not reported as truncated", () => {
+    const body = `<h1>Title</h1><a href="/x">link</a><button>go</button><p>${"word ".repeat(500)}</p>`;
+    const result = extractWithStatus(html("", body), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.links[0]?.hasAccessibleName).toBe(true);
+  });
+
+  test("many nested labels around many controls stay fast", () => {
+    const markup = `${"<label>".repeat(900)}${'<input type="text">'.repeat(30000)}`;
+    const started = Date.now();
+    const doc = extractDocument(html("", markup), URL0);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(doc.formControls).toHaveLength(30000);
+    expect(doc.formControls.every((c) => c.labelled)).toBe(true);
   });
 
   test("an unparseable page url does not throw", () => {

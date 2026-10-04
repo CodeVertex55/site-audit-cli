@@ -8,7 +8,7 @@ import {
   type PageRecord,
   type SiteContext,
 } from "../types.js";
-import { exceedsNestingLimit, extractDocument } from "./extract.js";
+import { extractWithStatus } from "./extract.js";
 import { Fetcher, type FetchResult } from "./fetcher.js";
 import { HostGate, type Clock } from "./ratelimit.js";
 import {
@@ -473,13 +473,14 @@ function newRecord(
   };
 }
 
-/** Parses the body of a successful HTML response and flags a page cut short by the nesting guard. */
+/** Parses the body of a successful HTML response and flags a page cut short by the nesting guard or the text-read budget. */
 function attachDocument(record: PageRecord, r: FetchResult): void {
   const status = r.status;
   if (status === null || status < 200 || status >= 300) return;
   if (r.body === null || !isHtmlType(r.contentType)) return;
-  record.doc = extractDocument(r.body, record.finalUrl, r.headers);
-  if (exceedsNestingLimit(r.body)) record.truncated = true;
+  const extracted = extractWithStatus(r.body, record.finalUrl, r.headers);
+  record.doc = extracted.doc;
+  if (extracted.truncated) record.truncated = true;
 }
 
 /**
