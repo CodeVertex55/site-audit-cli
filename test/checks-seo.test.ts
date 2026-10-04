@@ -239,9 +239,19 @@ describe("canonical checks", () => {
   });
 
   test("canonical checks skip noindex pages", () => {
-    const hidden = makePage({ doc: { canonicals: [], metaRobots: ["noindex"] } });
-    const got = ids(one(hidden));
-    expect(got).not.toContain("SEO-CANON-030");
+    const gone = at("/gone", { status: 404, isHtml: false, doc: null });
+    const hidden = makePage({
+      doc: {
+        canonicals: [`${SITE}/gone`, "https://other.example/"],
+        metaRobots: ["noindex"],
+      },
+    });
+    const noCanonical = makePage({ doc: { canonicals: [], metaRobots: ["noindex"] } });
+    const got = ids(makeContext({ pages: [hidden, gone] }));
+    for (const id of ["SEO-CANON-030", "SEO-CANON-031", "SEO-CANON-032", "SEO-CANON-033"]) {
+      expect(got, id).not.toContain(id);
+      expect(only(id, one(noCanonical)).status, id).toBe("pass");
+    }
   });
 });
 
@@ -298,14 +308,38 @@ describe("indexing checks", () => {
     expect(ids(makeContext({ pages: [makePage(), other] }))).not.toContain("SEO-INDEX-043");
   });
 
+  test("SEO-INDEX-042 is not-applicable when robots.txt was ignored", () => {
+    const url = `${SITE}/private`;
+    const base = makeContext();
+    const ctx = {
+      ...base,
+      robots: { ...base.robots, ignored: true },
+      sitemap: { ...base.sitemap, urls: [url] },
+    };
+    const out = only("SEO-INDEX-042", ctx);
+    expect(out.status).toBe("not-applicable");
+    expect(out.findings).toEqual([]);
+  });
+
+  test("SEO-INDEX-042 is not-applicable when the sitemap lists no URLs", () => {
+    const ctx = withLimits([makePage()], { blockedByRobots: [`${SITE}/private`] });
+    expect(ctx.sitemap.urls).toEqual([]);
+    expect(only("SEO-INDEX-042", ctx).status).toBe("not-applicable");
+  });
+
   test("SEO-INDEX-043 reports a start page reached through a redirect once", () => {
-    const start = makePage({
-      url: `${SITE}/home`,
+    const redirect = at("/start", {
       finalUrl: `${SITE}/home`,
-      doc: { metaRobots: ["noindex"] },
+      status: 301,
+      isHtml: false,
+      doc: null,
+      hops: [{ url: `${SITE}/start`, status: 301, location: `${SITE}/home` }],
     });
-    const ctx = makeContext({ pages: [start], startUrl: `${SITE}/home` });
-    expect(only("SEO-INDEX-043", ctx).findings).toHaveLength(1);
+    const target = at("/home", { doc: { metaRobots: ["noindex"] } });
+    const ctx = makeContext({ pages: [redirect, target], startUrl: `${SITE}/home` });
+    const out = only("SEO-INDEX-043", ctx);
+    expect(out.findings).toHaveLength(1);
+    expect(out.findings[0]?.url).toBe(target.url);
   });
 });
 
@@ -402,6 +436,32 @@ describe("sitemap checks", () => {
     expect(ids(withSitemap({ found: true }))).not.toContain("SEO-MAP-090");
   });
 
+  test("an invalid sitemap that answered 200 gives SEO-MAP-093 only, not SEO-MAP-090", () => {
+    const invalid = withSitemap({
+      found: false,
+      files: [{ url: `${SITE}/sitemap.xml`, status: 200, ok: false, note: "invalid" }],
+    });
+    const got = ids(invalid).filter((id) => id.startsWith("SEO-MAP-"));
+    expect(got).toEqual(["SEO-MAP-093"]);
+  });
+
+  test("no sitemap at all gives SEO-MAP-090 only", () => {
+    const missing = withSitemap({
+      found: false,
+      files: [{ url: `${SITE}/sitemap.xml`, status: 404, ok: false, note: "status 404" }],
+    });
+    const got = ids(missing).filter((id) => id.startsWith("SEO-MAP-"));
+    expect(got).toEqual(["SEO-MAP-090"]);
+  });
+
+  test("SEO-MAP-091, 092 and 093 are not-applicable when no sitemap file was tried", () => {
+    const ctx = withSitemap({ found: false, urls: [], files: [] });
+    for (const id of ["SEO-MAP-091", "SEO-MAP-092", "SEO-MAP-093"]) {
+      expect(only(id, ctx).status, id).toBe("not-applicable");
+    }
+    expect(only("SEO-MAP-090", ctx).status).toBe("fail");
+  });
+
   test("SEO-MAP-091 fires when robots.txt does not list a found sitemap", () => {
     const base = makeContext();
     const unlisted = { ...base, robots: { ...base.robots, sitemaps: [] } };
@@ -484,6 +544,19 @@ describe("sitemap checks", () => {
     const linked = at("/linked", { inSitemap: true, inlinks: [`${SITE}/`] });
     const start = makePage({ inSitemap: true });
     const ctx = withLimits([start, linked], { uncrawled: 0 });
+    expect(only("SEO-MAP-094", ctx).status).toBe("pass");
+  });
+
+  test("SEO-MAP-094 exempts a start page reached through a redirect", () => {
+    const redirect = at("/start", {
+      finalUrl: `${SITE}/home`,
+      status: 301,
+      isHtml: false,
+      doc: null,
+      hops: [{ url: `${SITE}/start`, status: 301, location: `${SITE}/home` }],
+    });
+    const target = at("/home", { inSitemap: true, inlinks: [] });
+    const ctx = withLimits([redirect, target], { uncrawled: 0 }, { startUrl: `${SITE}/home` });
     expect(only("SEO-MAP-094", ctx).status).toBe("pass");
   });
 

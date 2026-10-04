@@ -70,7 +70,7 @@ describe("registry", () => {
 
   test("site-level checks still run when no HTML page loaded", () => {
     const base = makeContext({ pages: [] });
-    const ctx = { ...base, sitemap: { ...base.sitemap, found: false } };
+    const ctx = { ...base, sitemap: { ...base.sitemap, found: false, files: [] } };
     const outcome = runChecks(ctx, ["seo"]).find((o) => o.id === "SEO-MAP-090");
     expect(outcome?.status).toBe("fail");
   });

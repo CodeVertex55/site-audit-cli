@@ -80,6 +80,11 @@ function isStartPage(ctx: SiteContext, page: PageRecord): boolean {
   return page.url === ctx.startUrl || page.finalUrl === ctx.startUrl;
 }
 
+/** True when the crawler tried at least one sitemap file. */
+function hasSitemapFiles(ctx: SiteContext): boolean {
+  return ctx.sitemap.files.length > 0;
+}
+
 function originOfUrl(url: string): string | null {
   try {
     return new URL(url).origin;
@@ -334,7 +339,8 @@ export const SEO_CHECKS: CheckSpec[] = [
     why: "The sitemap offers a URL that robots.txt forbids crawlers to fetch. Search engines cannot read a page they may not crawl.",
     fix: "Remove the URL from the sitemap, or change the robots.txt rule that blocks it.",
     heuristic: null,
-    applies: () => true,
+    // With robots.txt ignored the crawler never records blocked URLs, so nothing was evaluated.
+    applies: (ctx) => !ctx.robots.ignored && ctx.sitemap.urls.length > 0,
     run: (ctx, emit) => {
       const blocked = new Set(ctx.limits.blockedByRobots);
       return ctx.sitemap.urls
@@ -477,8 +483,9 @@ export const SEO_CHECKS: CheckSpec[] = [
     fix: "Publish a sitemap.xml and list it in robots.txt.",
     heuristic: null,
     applies: () => true,
+    // A sitemap that answered 200 but was invalid is reported by SEO-MAP-093, not here.
     run: (ctx, emit) =>
-      ctx.sitemap.found
+      ctx.sitemap.found || ctx.sitemap.files.some((f) => f.status === 200)
         ? []
         : [emit(null, "No sitemap was named in robots.txt and none was found at /sitemap.xml.")],
   }),
@@ -490,7 +497,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     why: "A Sitemap line in robots.txt lets every crawler find the sitemap without being told about it.",
     fix: "Add a line such as Sitemap: https://example.com/sitemap.xml to robots.txt.",
     heuristic: null,
-    applies: () => true,
+    applies: hasSitemapFiles,
     run: (ctx, emit) =>
       ctx.sitemap.found && ctx.robots.sitemaps.length === 0
         ? [emit(null, "A sitemap exists but robots.txt has no Sitemap line.")]
@@ -504,7 +511,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     why: "The sitemap should list only live pages. Broken or redirecting entries waste crawl effort and lower trust in the file.",
     fix: "Remove the URL from the sitemap, or list its final address.",
     heuristic: null,
-    applies: () => true,
+    applies: hasSitemapFiles,
     run: (ctx, emit) =>
       ctx.pages.flatMap((p) => {
         if (!p.inSitemap || p.failure === "blocked-by-robots") return [];
@@ -527,7 +534,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     why: "Search engines ignore a sitemap they cannot read, so none of its URLs are submitted.",
     fix: "Check that the file is valid sitemap XML and is served with status 200.",
     heuristic: null,
-    applies: () => true,
+    applies: hasSitemapFiles,
     run: (ctx, emit) =>
       ctx.sitemap.files
         .filter((f) => !f.ok && f.status === 200 && f.note !== null && f.note !== NESTED_INDEX_NOTE)
