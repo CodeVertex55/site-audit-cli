@@ -1,0 +1,33 @@
+import { describe, expect, test } from "vitest";
+import { renderJson } from "../src/report/json.js";
+import { UNSAFE, makeHostileResult, makeResult } from "./helpers/result.js";
+
+describe("renderJson", () => {
+  test("parses back to an object equal to the input and ends with a newline", () => {
+    const result = makeResult();
+    const out = renderJson(result);
+    expect(JSON.parse(out)).toEqual(result);
+    expect(out.endsWith("}\n")).toBe(true);
+    expect(out).toBe(JSON.stringify(result, null, 2) + "\n");
+  });
+
+  test("is complete: every finding is present", () => {
+    const parsed = JSON.parse(renderJson(makeResult())) as ReturnType<typeof makeResult>;
+    expect(parsed.checks[0]?.findings).toHaveLength(12);
+    expect(parsed.schemaVersion).toBe(1);
+  });
+
+  test("hostile text round-trips unchanged yet prints no raw control or bidi character", () => {
+    const result = makeHostileResult();
+    const out = renderJson(result);
+    expect(JSON.parse(out)).toEqual(result);
+    expect(out).not.toMatch(UNSAFE);
+    expect(out).not.toContain("\u001b");
+  });
+
+  test("does not turn escaped backslashes into extra escapes", () => {
+    const base = makeResult();
+    const result = makeResult({ scope: { ...base.scope, originNote: "a\\u202eb \u202e c" } });
+    expect(JSON.parse(renderJson(result))).toEqual(result);
+  });
+});
