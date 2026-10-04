@@ -20,6 +20,34 @@ function fetcher(opts: Partial<FetcherOptions> = {}): Fetcher {
   });
 }
 
+/** A response body of `size` bytes, sent in 16 KB chunks only as the reader asks for them. */
+function countingStream(size: number): {
+  body: ReadableStream<Uint8Array>;
+  sent: () => number;
+  cancelled: () => boolean;
+} {
+  let sent = 0;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (sent >= size) {
+          controller.close();
+          return;
+        }
+        const chunk = new Uint8Array(Math.min(16 * 1024, size - sent));
+        sent += chunk.length;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { body, sent: () => sent, cancelled: () => cancelled };
+}
+
 function sleepLog(): Clock & { slept: number[] } {
   const slept: number[] = [];
   let t = 0;
@@ -252,7 +280,7 @@ describe("get: body", () => {
     expect(r.body).toBe("<p>plain</p>");
   });
 
-  test("a non-text response has a null body but still counts bytes", async () => {
+  test("a non-text response has a null body and takes bytes from Content-Length", async () => {
     site = await startSite({
       "/img": { body: Buffer.alloc(300, 1), headers: { "content-type": "image/png" } },
     });
@@ -261,6 +289,53 @@ describe("get: body", () => {
     expect(r.body).toBeNull();
     expect(r.bytes).toBe(300);
     expect(r.contentType).toBe("image/png");
+  });
+
+  test("a non-text body is not downloaded", async () => {
+    const stream = countingStream(300 * 1024);
+    const r = await fetcher({
+      fetchImpl: () =>
+        Promise.resolve(
+          new Response(stream.body, {
+            headers: { "content-type": "application/octet-stream", "content-length": "307200" },
+          }),
+        ),
+    }).get("http://example.com/file.bin");
+    expect(r.body).toBeNull();
+    expect(r.bytes).toBe(307200);
+    expect(stream.sent()).toBeLessThanOrEqual(16 * 1024);
+    expect(stream.cancelled()).toBe(true);
+  });
+
+  test("a non-text body without Content-Length has no byte count", async () => {
+    const stream = countingStream(300 * 1024);
+    const r = await fetcher({
+      fetchImpl: () =>
+        Promise.resolve(new Response(stream.body, { headers: { "content-type": "video/mp4" } })),
+    }).get("http://example.com/clip.mp4");
+    expect(r.body).toBeNull();
+    expect(r.bytes).toBeNull();
+    expect(stream.cancelled()).toBe(true);
+  });
+
+  test("JSON is read as text", async () => {
+    site = await startSite({
+      "/j": { body: '{"a":1}', headers: { "content-type": "application/json" } },
+      "/ld": { body: '{"b":2}', headers: { "content-type": "application/ld+json" } },
+    });
+    expect((await fetcher().get(site.url("/j"))).body).toBe('{"a":1}');
+    expect((await fetcher().get(site.url("/ld"))).body).toBe('{"b":2}');
+  });
+
+  test("anyType decodes the body whatever the content type, within its own byte cap", async () => {
+    site = await startSite({
+      "/r": { body: "User-agent: *\nDisallow: /x\n", headers: { "content-type": "image/png" } },
+    });
+    const r = await fetcher().get(site.url("/r"), { anyType: true });
+    expect(r.body).toBe("User-agent: *\nDisallow: /x\n");
+    const cut = await fetcher().get(site.url("/r"), { anyType: true, maxBytes: 10 });
+    expect(cut.body).toBe("User-agent");
+    expect(cut.truncated).toBe(true);
   });
 
   test("XML and plain text are decoded", async () => {
@@ -459,6 +534,26 @@ describe("probe", () => {
     expect(r.status).toBe(200);
     expect(r.finalUrl).toBe(site.url("/new.png"));
     expect(r.bytes).toBe(64);
+  });
+
+  test("with sameHostOnly a redirect to another host is not followed", async () => {
+    const seen: string[] = [];
+    const r = await fetcher({
+      fetchImpl: (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        seen.push(url);
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://elsewhere.example/lib.js" },
+          }),
+        );
+      },
+    }).probe("https://cdn.example/lib.js", { sameHostOnly: true });
+    expect(seen).toEqual(["https://cdn.example/lib.js"]);
+    expect(r.measured).toBe(false);
+    expect(r.status).toBeNull();
   });
 
   test("a missing asset reports its status and no size", async () => {

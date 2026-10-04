@@ -65,12 +65,29 @@ function combinedGroup(file: RobotsFile, agent: string): RobotsGroup | null {
   };
 }
 
+// The selected group for each parsed file and token. A file is read many times during a crawl,
+// and choosing the group walks every group in it.
+const groupCache = new WeakMap<RobotsFile, Map<string, RobotsGroup | null>>();
+
 /**
  * The group for a user-agent token: the longest agent that is a
  * case-insensitive prefix of the token, else "*", else null. All groups that
- * name the chosen agent are combined.
+ * name the chosen agent are combined. The result is cached per file and token.
  */
 export function selectGroup(file: RobotsFile, token: string): RobotsGroup | null {
+  let byToken = groupCache.get(file);
+  if (byToken === undefined) {
+    byToken = new Map();
+    groupCache.set(file, byToken);
+  }
+  const cached = byToken.get(token);
+  if (cached !== undefined) return cached;
+  const group = findGroup(file, token);
+  byToken.set(token, group);
+  return group;
+}
+
+function findGroup(file: RobotsFile, token: string): RobotsGroup | null {
   const lowered = token.toLowerCase();
   let bestAgent: string | null = null;
   for (const group of file.groups) {

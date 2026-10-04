@@ -44,7 +44,9 @@ type Say = NonNullable<CrawlDeps["onProgress"]>;
 
 const MAX_SITEMAP_FILES = 5;
 const MAX_SITEMAP_URLS = 5000;
-const MAX_ROBOTS_CHARS = 512 * 1024;
+const MAX_ROBOTS_BYTES = 512 * 1024;
+/** Origin moves a start redirect may make while it stays on the requested site. */
+const MAX_SAME_SITE_SHIFTS = 3;
 const BLOCKED_CODE = "SITE_AUDIT_BLOCKED";
 
 type BlockReason = "origin" | "shift" | "excluded" | "robots";
@@ -228,13 +230,20 @@ function robotsSummary(
   };
 }
 
-/** Fetches and parses `<origin>/robots.txt`. A 4xx answer means there is no file. */
+/**
+ * Fetches and parses `<origin>/robots.txt`. A 4xx answer means there is no file. The body is
+ * read as text whatever its Content-Type, up to 512 KB; rules after that are ignored.
+ */
 async function loadRobots(
   fetcher: Fetcher,
   origin: string,
   options: AuditOptions,
+  say: Say,
 ): Promise<RobotsState> {
-  const r = await fetcher.get(`${origin}/robots.txt`);
+  const r = await fetcher.get(`${origin}/robots.txt`, {
+    anyType: true,
+    maxBytes: MAX_ROBOTS_BYTES,
+  });
   const ignored = options.ignoreRobots;
   const movedAway = leftSite(r, origin);
   const none = (unreadable: string | null): RobotsState => ({
@@ -249,7 +258,14 @@ async function loadRobots(
   if (r.status >= 500) return none(`status ${r.status}`);
   if (r.status < 200 || r.status >= 300) return none(null);
 
-  const file = parseRobots((r.body ?? "").slice(0, MAX_ROBOTS_CHARS));
+  if (r.truncated) {
+    say({
+      kind: "note",
+      done: 0,
+      message: `robots.txt at ${origin} is larger than 512 KB. Rules after the first 512 KB were ignored.`,
+    });
+  }
+  const file = parseRobots(r.body ?? "");
   const delay = crawlDelayMs(file, ROBOTS_TOKEN);
   return {
     file,
@@ -344,9 +360,11 @@ function failStart(
  * Reads robots.txt, fetches the start URL and works out the audit origin. robots.txt comes
  * first, so a Crawl-delay applies from the first page request and a disallowed start URL is
  * never requested. Every hop of the start URL's redirect chain is checked before it is sent:
- * it must not match --exclude or be disallowed by robots.txt. A hop to another origin is allowed
- * once, as the move of the audit origin, and only after that origin's robots.txt has been read.
- * That read happens between two fetches, never inside a request that holds a gate slot.
+ * it must not match --exclude or be disallowed by robots.txt. A hop to another origin moves the
+ * audit origin, and only after that origin's robots.txt has been read and its Crawl-delay
+ * applied. Up to three moves are allowed while each new origin is on the requested site (the
+ * same hostname or its www or apex sibling), and one move to a different site. The robots.txt
+ * read happens between two fetches, never inside a request that holds a gate slot.
  */
 async function openSite(
   options: AuditOptions,
@@ -363,16 +381,23 @@ async function openSite(
     siteOnly(net, requestedOrigin),
     requestedOrigin,
     options,
+    say,
   );
   robotsByOrigin.set(requestedOrigin, requestedRobots);
   enforceRobots(requestedRobots, requestedOrigin, requested, options);
   applyCrawlDelay(gate, requestedOrigin, requestedRobots, options, say);
 
   let currentOrigin = requestedOrigin;
+  let sameSiteShifts = 0;
+  let movedToOtherSite = false;
   const verdict = (url: string): BlockReason | null => {
     if (url === requested) return null;
-    if (originOf(url) !== currentOrigin)
-      return currentOrigin === requestedOrigin ? "shift" : "origin";
+    if (originOf(url) !== currentOrigin) {
+      if (sameSite(url, requestedOrigin)) {
+        return sameSiteShifts < MAX_SAME_SITE_SHIFTS ? "shift" : "origin";
+      }
+      return movedToOtherSite ? "origin" : "shift";
+    }
     if (isExcluded(url, options.exclude)) return "excluded";
     const state = robotsByOrigin.get(currentOrigin);
     if (!options.ignoreRobots && state !== undefined) {
@@ -385,12 +410,19 @@ async function openSite(
   const hops: Hop[] = [];
   let start = await startFetcher.get(requested);
   hops.push(...start.hops);
-  if (start.failure === "other" && blockedAt.get(start.finalUrl) === "shift") {
-    // The move happens once: the entry is cleared, and a later hop to a third origin is refused.
+  while (start.failure === "other" && blockedAt.get(start.finalUrl) === "shift") {
+    // Each move is counted before the next request, so the verdict refuses a move past the limit.
     const shifted = start.finalUrl;
     blockedAt.delete(shifted);
+    if (sameSite(shifted, requestedOrigin)) sameSiteShifts += 1;
+    else movedToOtherSite = true;
     const next = originOf(shifted);
-    robotsByOrigin.set(next, await loadRobots(siteOnly(net, next), next, options));
+    let nextRobots = robotsByOrigin.get(next);
+    if (nextRobots === undefined) {
+      nextRobots = await loadRobots(siteOnly(net, next), next, options, say);
+      robotsByOrigin.set(next, nextRobots);
+      applyCrawlDelay(gate, next, nextRobots, options, say);
+    }
     currentOrigin = next;
     start = await startFetcher.get(shifted);
     hops.push(...start.hops);
@@ -399,7 +431,6 @@ async function openSite(
   if (start.status === null) failStart(start, blockedAt, (o) => robotsByOrigin.get(o), options);
   const origin = originOf(start.finalUrl);
   const robots = robotsByOrigin.get(origin) ?? requestedRobots;
-  if (origin !== requestedOrigin) applyCrawlDelay(gate, origin, robots, options, say);
   if (start.status >= 400) {
     throw new UnreachableError(`The start URL answered with status ${start.status}.`);
   }
@@ -538,14 +569,23 @@ function newRecord(
   };
 }
 
-/** Parses the body of a successful HTML response and flags a page cut short by the nesting guard or the text-read budget. */
+/**
+ * Parses the body of a successful HTML response and flags a page cut short by the nesting guard
+ * or the text-read budget. A page whose extraction throws keeps no document and is flagged
+ * truncated, so one page cannot end the crawl.
+ */
 function attachDocument(record: PageRecord, r: FetchResult): void {
   const status = r.status;
   if (status === null || status < 200 || status >= 300) return;
   if (r.body === null || !isHtmlType(r.contentType)) return;
-  const extracted = extractWithStatus(r.body, record.finalUrl, r.headers);
-  record.doc = extracted.doc;
-  if (extracted.truncated) record.truncated = true;
+  try {
+    const extracted = extractWithStatus(r.body, record.finalUrl, r.headers);
+    record.doc = extracted.doc;
+    if (extracted.truncated) record.truncated = true;
+  } catch {
+    record.doc = null;
+    record.truncated = true;
+  }
 }
 
 /**
@@ -562,6 +602,8 @@ async function crawlPages(a: CrawlArgs): Promise<CrawlOutcome> {
   const blockedSet = new Set<string>();
   let seq = 1;
   let counted = 0;
+  // Linked files that are not HTML have a cap of their own, the same as the page cap.
+  let resources = 0;
 
   const block = (url: string): void => {
     if (blockedSet.has(url)) return;
@@ -614,7 +656,8 @@ async function crawlPages(a: CrawlArgs): Promise<CrawlOutcome> {
     }
     found.push({ record, order: item.seq });
     const isResource = reason === undefined && r.status !== null && !record.isHtml;
-    if (!isResource) counted += 1;
+    if (isResource) resources += 1;
+    else counted += 1;
     say({ kind: "page", url: item.url, done: counted });
   };
 
@@ -624,7 +667,8 @@ async function crawlPages(a: CrawlArgs): Promise<CrawlOutcome> {
       while (
         active.size < options.concurrency &&
         queue.length > 0 &&
-        counted + active.size < options.maxPages
+        counted + active.size < options.maxPages &&
+        resources + active.size < options.maxPages
       ) {
         const item = queue.shift();
         if (item === undefined) break;
@@ -718,8 +762,9 @@ function cacheControlOf(headers: Record<string, string>): string | null {
   return headers.expires === undefined ? null : "expires";
 }
 
+/** A third-party asset is never followed through a redirect to a different host. */
 async function probeAsset(fetcher: Fetcher, asset: AssetRecord): Promise<void> {
-  const p = await fetcher.probe(asset.url);
+  const p = await fetcher.probe(asset.url, { sameHostOnly: asset.thirdParty });
   if (isThrottled(p.status)) return;
   asset.status = p.status;
   if (!p.measured) return;

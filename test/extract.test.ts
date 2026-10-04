@@ -1102,8 +1102,9 @@ describe("hostile and broken markup", () => {
     const started = Date.now();
     const result = extractWithStatus(html("", markup), URL0);
     expect(Date.now() - started).toBeLessThan(5000);
-    expect(result.truncated).toBe(false);
-    expect(result.doc.formControls).toHaveLength(30000);
+    // 30000 controls pass the per-page cap, so the first 5000 are kept and the page is flagged.
+    expect(result.truncated).toBe(true);
+    expect(result.doc.formControls).toHaveLength(5000);
     expect(result.doc.formControls.every((c) => c.labelled)).toBe(true);
   });
 
@@ -1117,5 +1118,19 @@ describe("hostile and broken markup", () => {
     const doc = extractDocument(html("", big), URL0);
     expect(Date.now() - started).toBeLessThan(2000);
     expect(doc.wordCount).toBe(1);
+  });
+});
+
+describe("per-page caps on collected items", () => {
+  test("more than 5000 images keeps the first 5000 and flags the page truncated", () => {
+    const result = extractWithStatus(html("", '<img src="/i.png" alt="i">'.repeat(5001)), URL0);
+    expect(result.doc.images).toHaveLength(5000);
+    expect(result.truncated).toBe(true);
+  });
+
+  test("exactly 5000 images is not truncated", () => {
+    const result = extractWithStatus(html("", '<img src="/i.png" alt="i">'.repeat(5000)), URL0);
+    expect(result.doc.images).toHaveLength(5000);
+    expect(result.truncated).toBe(false);
   });
 });

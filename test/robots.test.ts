@@ -249,3 +249,21 @@ describe("patternMatches", () => {
     expect(Date.now() - start).toBeLessThan(200);
   });
 });
+
+describe("group lookup cost", () => {
+  test("50000 isAllowed calls on a 5000-group file finish in under 2 seconds", () => {
+    const groups = Array.from(
+      { length: 5000 },
+      (_, i) => `User-agent: bot-${i}\nDisallow: /p${i}/\n`,
+    ).join("\n");
+    const big = parseRobots(`${groups}\nUser-agent: *\nDisallow: /private/\n`);
+    const started = performance.now();
+    let allowed = 0;
+    for (let i = 0; i < 50_000; i += 1) {
+      if (isAllowed(big, "site-audit-cli", `/page/${i}`)) allowed += 1;
+    }
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(allowed).toBe(50_000);
+    expect(isAllowed(big, "site-audit-cli", "/private/x")).toBe(false);
+  });
+});

@@ -27,6 +27,10 @@ function opts(site: TestSite, over: Partial<AuditOptions> = {}): AuditOptions {
   return { ...DEFAULT_OPTIONS, startUrl: site.url("/"), delayMs: 0, timeoutMs: 2000, ...over };
 }
 
+function rawUrl(input: Parameters<typeof fetch>[0]): string {
+  return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+}
+
 /** A fetch that serves the site for real and records anything else instead of sending it. */
 function offOriginSpy(site: TestSite): { fetchImpl: typeof fetch; seen: string[] } {
   const web = fakeWeb({});
@@ -59,6 +63,8 @@ function gaps(times: number[]): number[] {
 }
 
 const ROBOTS_TEXT = { "content-type": "text/plain" };
+const SECRET_ROBOTS = "User-agent: *\nDisallow: /secret/\n";
+const HOME_WITH_SECRET = page({ body: `<a href="/secret/x">s</a> <a href="/ok">ok</a>` });
 
 function linkTo(...hrefs: string[]): string {
   return hrefs.map((href) => `<a href="${href}">link</a>`).join(" ");
@@ -180,6 +186,63 @@ describe("robots.txt", () => {
     const times = site.log.slice(0, 3).map((r) => r.at);
     expect(times).toHaveLength(3);
     for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(900);
+  });
+
+  test("robots.txt served as application/octet-stream is still obeyed", async () => {
+    const site = await start({
+      "/robots.txt": {
+        headers: { "content-type": "application/octet-stream" },
+        body: SECRET_ROBOTS,
+      },
+      "/": { body: HOME_WITH_SECRET },
+      "/ok": { body: page() },
+      "/secret/x": { body: page() },
+    });
+    const ctx = await crawlSite(opts(site));
+    expect(site.hits("/secret/x")).toBe(0);
+    expect(ctx.robots.present).toBe(true);
+    expect(ctx.limits.blockedByRobots).toEqual([site.url("/secret/x")]);
+  });
+
+  test("robots.txt served without a Content-Type is still obeyed", async () => {
+    const site = await start({
+      "/robots.txt": { body: SECRET_ROBOTS },
+      "/": { body: HOME_WITH_SECRET },
+      "/ok": { body: page() },
+      "/secret/x": { body: page() },
+    });
+    const real = globalThis.fetch;
+    const ctx = await crawlSite(opts(site), {
+      fetchImpl: async (input, init) => {
+        const response = await real(input, init);
+        const raw =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (!raw.endsWith("/robots.txt")) return response;
+        const headers = new Headers(response.headers);
+        headers.delete("content-type");
+        return new Response(response.body, { status: response.status, headers });
+      },
+    });
+    expect(site.hits("/secret/x")).toBe(0);
+    expect(ctx.limits.blockedByRobots).toEqual([site.url("/secret/x")]);
+  });
+
+  test("robots.txt is read up to 512 KB, later rules are ignored and a note says so", async () => {
+    const padding = "# padding line\n".repeat(Math.ceil((512 * 1024) / 15));
+    const site = await start({
+      "/robots.txt": { headers: ROBOTS_TEXT, body: `User-agent: *\n${padding}${SECRET_ROBOTS}` },
+      "/": { body: HOME_WITH_SECRET },
+      "/ok": { body: page() },
+      "/secret/x": { body: page() },
+    });
+    const notes: string[] = [];
+    await crawlSite(opts(site), {
+      onProgress: (e) => {
+        if (e.kind === "note" && e.message !== undefined) notes.push(e.message);
+      },
+    });
+    expect(site.hits("/secret/x")).toBe(1);
+    expect(notes.some((m) => m.includes("robots.txt") && m.includes("512 KB"))).toBe(true);
   });
 
   test("the crawl-delay is not applied when robots are ignored", async () => {
@@ -704,9 +767,6 @@ function crawlStandIn(
   return { ctx, seen: web.seen };
 }
 
-const SECRET_ROBOTS = "User-agent: *\nDisallow: /secret/\n";
-const HOME_WITH_SECRET = page({ body: `<a href="/secret/x">s</a> <a href="/ok">ok</a>` });
-
 describe("same-site redirects of robots.txt and sitemaps", () => {
   test("a robots.txt redirect to the www sibling is followed and its rules apply to the asked origin", async () => {
     const routes: Record<string, FakeRoute> = {
@@ -870,6 +930,64 @@ describe("a start redirect that moves the origin", () => {
     expect(run.seen.filter((s) => s === "GET https://www.site.example/robots.txt")).toHaveLength(1);
   }, 4000);
 
+  test("a same-site chain from http apex to https www reads each robots.txt before the page", async () => {
+    const clock = instantClock();
+    const web = fakeWeb({
+      "http://site.example/": { status: 301, location: "https://site.example/" },
+      "https://site.example/": { status: 301, location: "https://www.site.example/" },
+      "https://www.site.example/robots.txt": {
+        body: "User-agent: *\nCrawl-delay: 5\nDisallow: /secret/\n",
+      },
+      "https://www.site.example/": {
+        body: page({ title: "Www", body: linkTo("/secret/x", "/ok") }),
+      },
+      "https://www.site.example/ok": { body: page() },
+    });
+    const log: { at: number; request: string }[] = [];
+    const ctx = await crawlSite(
+      { ...DEFAULT_OPTIONS, startUrl: "http://site.example/", delayMs: 0, timeoutMs: 2000 },
+      {
+        clock,
+        fetchImpl: (input, init) => {
+          log.push({ at: clock.now(), request: `${init?.method ?? "GET"} ${rawUrl(input)}` });
+          return web.fetchImpl(input, init);
+        },
+      },
+    );
+    expect(ctx.origin).toBe("https://www.site.example");
+    expect(ctx.originNote).toBe("Start URL redirected to https://www.site.example/");
+    expect(ctx.robots.crawlDelay).toBe(5000);
+    const requests = log.map((entry) => entry.request);
+    const indexOf = (request: string): number => {
+      const at = requests.indexOf(request);
+      expect(at, request).toBeGreaterThanOrEqual(0);
+      return at;
+    };
+    expect(indexOf("GET https://site.example/robots.txt")).toBeLessThan(
+      indexOf("GET https://site.example/"),
+    );
+    const robotsAt = indexOf("GET https://www.site.example/robots.txt");
+    const homeAt = indexOf("GET https://www.site.example/");
+    expect(robotsAt).toBeLessThan(homeAt);
+    expect((log[homeAt]?.at ?? 0) - (log[robotsAt]?.at ?? 0)).toBeGreaterThanOrEqual(5000);
+    expect(requests).not.toContain("GET https://www.site.example/secret/x");
+  });
+
+  test("a fourth same-site origin shift is not followed", async () => {
+    const run = crawlStandIn(
+      {
+        "http://site.example/": { status: 301, location: "https://site.example/" },
+        "https://site.example/": { status: 301, location: "https://www.site.example/" },
+        "https://www.site.example/": { status: 301, location: "http://www.site.example/" },
+        "http://www.site.example/": { status: 301, location: "http://site.example/home" },
+        "http://site.example/home": { body: page() },
+      },
+      "http://site.example/",
+    );
+    await expect(run.ctx).rejects.toThrow(/several hosts/);
+    expect(run.seen).not.toContain("GET http://site.example/home");
+  });
+
   test("a shifted URL that answers with a broken Location fails once", async () => {
     const run = crawlStandIn(
       {
@@ -924,6 +1042,25 @@ describe("pages", () => {
     const ctx = await crawlSite(opts(site, { maxPages: 3, concurrency: 1 }));
     expect(urls(ctx)).toEqual(["/", "/a", "/b", "/file.pdf"].map((p) => site.url(p)));
     expect(ctx.limits.uncrawled).toBe(0);
+  });
+
+  test("linked files that are not HTML are capped at maxPages and the rest is uncrawled", async () => {
+    const files = Array.from({ length: 12 }, (_, i) => `/f${i}.bin`);
+    const def: SiteDef = { "/": { body: page({ body: linkTo(...files, "/a") }) } };
+    for (const file of files) {
+      def[file] = {
+        headers: { "content-type": "application/octet-stream" },
+        body: Buffer.alloc(300 * 1024),
+      };
+    }
+    def["/a"] = { body: page() };
+    const site = await start(def);
+    const ctx = await crawlSite(opts(site, { maxPages: 2 }));
+    const fetched = files.filter((file) => site.hits(file) > 0);
+    expect(fetched).toHaveLength(2);
+    expect(ctx.limits.uncrawled).toBe(11);
+    const first = pageAt(ctx, site.url("/f0.bin"));
+    expect(first).toMatchObject({ isHtml: false, doc: null, bytes: 300 * 1024 });
   });
 
   test("error pages are recorded without a parsed document", async () => {
@@ -1268,6 +1405,22 @@ describe("external hosts", () => {
     const ctx = await crawlSite(opts(site, { checkExternal: true }));
     expect(ctx.assets[0]).toMatchObject({ status: null, measured: false, thirdParty: true });
     expect(other.hits("/lib.js")).toBe(1);
+  });
+
+  test("a third-party asset that redirects to another host is not followed", async () => {
+    const site = await start({
+      "/": { body: page({ body: `<script src="https://cdn.example/lib.js"></script>` }) },
+    });
+    const web = fakeWeb({
+      "https://cdn.example/lib.js": { status: 302, location: "https://elsewhere.example/lib.js" },
+    });
+    const real = globalThis.fetch;
+    const ctx = await crawlSite(opts(site, { checkExternal: true }), {
+      fetchImpl: (input, init) =>
+        rawUrl(input).startsWith(site.origin) ? real(input, init) : web.fetchImpl(input, init),
+    });
+    expect(web.seen).toEqual(["HEAD https://cdn.example/lib.js"]);
+    expect(ctx.assets[0]).toMatchObject({ thirdParty: true, measured: false });
   });
 
   test("other hosts are held to one request at a time", async () => {

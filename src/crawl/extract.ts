@@ -176,6 +176,27 @@ const DOCUMENT_NODE_BUDGET = 3_000_000;
 
 type Budget = { visits: number; exhausted: boolean };
 
+// At most this many of each collected item (links, images, scripts, stylesheets, form controls,
+// buttons, iframes, headings, JSON-LD blocks, mixed-content URLs) are kept per page.
+export const MAX_ITEMS = 5000;
+
+/** Set when any per-page item cap dropped items. */
+type Caps = { hit: boolean };
+
+/** The first MAX_ITEMS items, noting in `caps` when some were dropped. */
+function capped<T>(items: T[], caps: Caps): T[] {
+  if (items.length <= MAX_ITEMS) return items;
+  caps.hit = true;
+  return items.slice(0, MAX_ITEMS);
+}
+
+/** True while `list` has room for another item; notes in `caps` when it is full. */
+function hasRoom(list: unknown[], caps: Caps): boolean {
+  if (list.length < MAX_ITEMS) return true;
+  caps.hit = true;
+  return false;
+}
+
 /** Count one node visit. False once the document budget is spent. */
 function spend(budget: Budget): boolean {
   if (budget.exhausted) return false;
@@ -578,17 +599,24 @@ export function extractDocument(
 /**
  * Same as `extractDocument`, and also says whether the facts are partial: `truncated` is true
  * when the parse stopped at the depth or node limit (the rest of the page is missing) or the shared
- * text-read budget ran out (some names and previews were decided from attributes only).
+ * text-read budget ran out (some names and previews were decided from attributes only). A parse
+ * that throws gives an empty document, flagged truncated.
  */
 export function extractWithStatus(
   html: string,
   pageUrl: string,
   headers: Record<string, string> = {},
 ): { doc: ParsedDocument; truncated: boolean } {
-  const parsed = parseBounded(html);
+  let parsed: { root: TreeNode; truncated: boolean };
+  try {
+    parsed = parseBounded(html);
+  } catch {
+    parsed = { root: { type: "root", children: [] }, truncated: true };
+  }
   const budget: Budget = { visits: 0, exhausted: false };
-  const doc = extractFacts(indexTree(parsed.root), pageUrl, headers, budget);
-  return { doc, truncated: parsed.truncated || budget.exhausted };
+  const caps: Caps = { hit: false };
+  const doc = extractFacts(indexTree(parsed.root), pageUrl, headers, budget, caps);
+  return { doc, truncated: parsed.truncated || budget.exhausted || caps.hit };
 }
 
 function extractFacts(
@@ -596,6 +624,7 @@ function extractFacts(
   pageUrl: string,
   headers: Record<string, string>,
   budget: Budget,
+  caps: Caps,
 ): ParsedDocument {
   const textOf = (el: El): string => textPreview(el, budget);
   const hasName = (el: El, text: string): boolean =>
@@ -662,7 +691,7 @@ function extractFacts(
     }
     if (rel.includes("stylesheet")) {
       const url = resolve(attrOf(el, "href"));
-      if (url !== null) {
+      if (url !== null && hasRoom(stylesheets, caps)) {
         const media = (attrOf(el, "media") ?? "").trim();
         stylesheets.push({
           url,
@@ -674,7 +703,7 @@ function extractFacts(
   }
 
   // Headings.
-  const headings = tree.headings.map((el) => ({
+  const headings = capped(tree.headings, caps).map((el) => ({
     level: Number(el.tagName.charAt(1)),
     text: textOf(el),
   }));
@@ -685,9 +714,10 @@ function extractFacts(
   for (const el of all("script")) {
     const type = lowerAttr(el, "type");
     if (type === "application/ld+json") {
-      jsonLd.push(parseJsonLd(scriptText(el)));
+      if (hasRoom(jsonLd, caps)) jsonLd.push(parseJsonLd(scriptText(el)));
       continue;
     }
+    if (!hasRoom(scripts, caps)) continue;
     const src = attrOf(el, "src");
     scripts.push({
       url: resolve(src),
@@ -700,24 +730,25 @@ function extractFacts(
   }
 
   // Links.
-  const links: ParsedDocument["links"] = all("a")
-    .filter((el) => attrOf(el, "href") !== undefined)
-    .map((el) => {
-      const href = attrOf(el, "href") ?? "";
-      const url = normaliseUrl(href, base);
-      const text = textOf(el);
-      return {
-        href,
-        url,
-        text,
-        internal: url !== null && sameOrigin(url, pageUrl),
-        rel: relTokens(el),
-        hasAccessibleName: hasName(el, text),
-      };
-    });
+  const links: ParsedDocument["links"] = capped(
+    all("a").filter((el) => attrOf(el, "href") !== undefined),
+    caps,
+  ).map((el) => {
+    const href = attrOf(el, "href") ?? "";
+    const url = normaliseUrl(href, base);
+    const text = textOf(el);
+    return {
+      href,
+      url,
+      text,
+      internal: url !== null && sameOrigin(url, pageUrl),
+      rel: relTokens(el),
+      hasAccessibleName: hasName(el, text),
+    };
+  });
 
   // Images.
-  const images: ParsedDocument["images"] = all("img").map((el, index) => {
+  const images: ParsedDocument["images"] = capped(all("img"), caps).map((el, index) => {
     const src = attrOf(el, "src");
     const alt = attrOf(el, "alt");
     const srcset = firstSrcsetUrl(attrOf(el, "srcset") ?? "");
@@ -753,6 +784,7 @@ function extractFacts(
     const tag = el.tagName.toLowerCase();
     const type = lowerAttr(el, "type");
     if (tag === "input" && type !== null && NON_LABELLED_INPUT_TYPES.has(type)) continue;
+    if (!hasRoom(formControls, caps)) break;
     let labelled: boolean;
     if (tag === "input" && type === "image") {
       labelled = hasText(el, "alt");
@@ -777,11 +809,11 @@ function extractFacts(
   }
 
   // Buttons and iframes.
-  const buttons: ParsedDocument["buttons"] = tree.buttons.map((el) => ({
+  const buttons: ParsedDocument["buttons"] = capped(tree.buttons, caps).map((el) => ({
     hasName: hasName(el, textOf(el)),
     describe: describeElement(el, ["type", "role"]),
   }));
-  const iframes: ParsedDocument["iframes"] = all("iframe").map((el) => ({
+  const iframes: ParsedDocument["iframes"] = capped(all("iframe"), caps).map((el) => ({
     hasTitle: hasText(el, "title"),
     src: attrOf(el, "src") ?? null,
   }));
@@ -795,7 +827,9 @@ function extractFacts(
       if (attrOf(el, attribute) === undefined) continue;
       if (tag === "link" && !relTokens(el).includes("stylesheet")) continue;
       const url = resolve(attrOf(el, attribute));
-      if (url !== null && url.startsWith("http://")) mixedContent.push(url);
+      if (url === null || !url.startsWith("http://")) continue;
+      if (!hasRoom(mixedContent, caps)) break;
+      mixedContent.push(url);
     }
   }
 

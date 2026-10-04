@@ -86,6 +86,21 @@ describe("parseSitemap", () => {
     ]);
   });
 
+  test.each([20_000, 100_000])(
+    "%i nested elements inside a loc finish quickly without throwing",
+    (depth) => {
+      const xml = `<urlset ${NS}><url><loc>https://example.com/a</loc></url><url><loc>${"<x>".repeat(depth)}https://example.com/b${"</x>".repeat(depth)}</loc></url></urlset>`;
+      const started = performance.now();
+      const parsed = parseSitemap(xml);
+      expect(performance.now() - started).toBeLessThan(2000);
+      expect(parsed.urls).toEqual(["https://example.com/a"]);
+    },
+  );
+
+  test("text of a malformed document does not throw", () => {
+    expect(() => parseSitemap(`<urlset><url><loc>https://example.com/a</url>`)).not.toThrow();
+  });
+
   test("duplicates do not count towards the cap", () => {
     const xml = `<urlset ${NS}>
   <url><loc>https://example.com/a</loc></url>

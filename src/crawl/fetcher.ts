@@ -28,6 +28,20 @@ export type ProbeResult = {
   finalUrl: string;
 };
 
+/** Options for one `get`. */
+export type GetOptions = {
+  /** Read and decode the body whatever the Content-Type says. */
+  anyType?: boolean;
+  /** Byte cap for this request's body, in place of the fetcher's own. */
+  maxBytes?: number;
+};
+
+/** Options for one `probe`. */
+export type ProbeOptions = {
+  /** Never follow a redirect to a different host. */
+  sameHostOnly?: boolean;
+};
+
 export type FetcherOptions = {
   userAgent: string;
   timeoutMs: number;
@@ -51,6 +65,9 @@ function isRedirectStatus(status: number): boolean {
 function isRetryStatus(status: number): boolean {
   return status === 429 || status === 503;
 }
+
+/** Which bodies `attempt` reads: none, only textual ones, or any. */
+type ReadMode = "none" | "text" | "any";
 
 type Raw = {
   status: number;
@@ -150,13 +167,17 @@ async function readCapped(
   return { bytes: Buffer.concat(chunks), truncated };
 }
 
-function isTextual(contentType: string): boolean {
+/** HTML, XML, plain text and JSON. */
+function isTextual(contentType: string | null): boolean {
+  if (contentType === null) return false;
   const mediaType = (contentType.split(";")[0] ?? "").trim().toLowerCase();
   return (
     mediaType.startsWith("text/") ||
     mediaType.includes("html") ||
     mediaType.endsWith("/xml") ||
-    mediaType.endsWith("+xml")
+    mediaType.endsWith("+xml") ||
+    mediaType.endsWith("/json") ||
+    mediaType.endsWith("+json")
   );
 }
 
@@ -281,15 +302,16 @@ export class Fetcher {
   }
 
   /**
-   * One network request. The body is read (up to maxBytes) only when `readBody`
-   * is set and the response is neither a followed redirect nor a response that
-   * will be retried.
+   * One network request. The body is read (up to maxBytes) only when `read` asks for it, the
+   * response is neither a followed redirect nor a response that will be retried, and, in "text"
+   * mode, the Content-Type is textual. Any other body is cancelled unread.
    */
   private async attempt(
     url: string,
     method: "GET" | "HEAD",
-    readBody: boolean,
+    read: ReadMode,
     retriesLeft: number,
+    maxBytes: number = this.maxBytes,
   ): Promise<Outcome> {
     let host: string;
     try {
@@ -311,18 +333,19 @@ export class Fetcher {
       const status = response.status;
       const location = response.headers.get("location");
       const skipBody =
-        !readBody ||
+        read === "none" ||
         method === "HEAD" ||
         (isRedirectStatus(status) && location !== null) ||
-        (isRetryStatus(status) && retriesLeft > 0);
+        (isRetryStatus(status) && retriesLeft > 0) ||
+        (read === "text" && !isTextual(response.headers.get("content-type")));
       let body: Uint8Array | null = null;
       let truncated = false;
       if (skipBody) {
         await discardBody(response);
       } else {
-        const read = await readCapped(response, this.maxBytes);
-        body = read.bytes;
-        truncated = read.truncated;
+        const result = await readCapped(response, maxBytes);
+        body = result.bytes;
+        truncated = result.truncated;
       }
       return {
         ok: true,
@@ -344,9 +367,9 @@ export class Fetcher {
   }
 
   /** GET with up to two retries after 429 or 503. */
-  private async getWithRetry(url: string): Promise<Outcome> {
+  private async getWithRetry(url: string, read: ReadMode, maxBytes: number): Promise<Outcome> {
     for (let retriesLeft = MAX_RETRIES; ; retriesLeft -= 1) {
-      const outcome = await this.attempt(url, "GET", true, retriesLeft);
+      const outcome = await this.attempt(url, "GET", read, retriesLeft, maxBytes);
       if (!outcome.ok || !isRetryStatus(outcome.raw.status)) return outcome;
       if (retriesLeft === 0) {
         const host = new URL(url).host;
@@ -359,8 +382,14 @@ export class Fetcher {
     }
   }
 
-  /** GET with manual redirect following (max 10 hops), body capped at maxBytes (default 5 MB). */
-  async get(url: string): Promise<FetchResult> {
+  /**
+   * GET with manual redirect following (max 10 hops), body capped at maxBytes (default 5 MB).
+   * Only a textual body (HTML, XML, plain text, JSON) is downloaded unless `anyType` is set;
+   * for any other body `bytes` is the Content-Length, or null without one.
+   */
+  async get(url: string, opts: GetOptions = {}): Promise<FetchResult> {
+    const read: ReadMode = opts.anyType === true ? "any" : "text";
+    const maxBytes = opts.maxBytes ?? this.maxBytes;
     const hops: Hop[] = [];
     const seen = new Set<string>([normaliseUrl(url) ?? url]);
     let current = url;
@@ -382,7 +411,7 @@ export class Fetcher {
     });
 
     for (;;) {
-      const outcome = await this.getWithRetry(current);
+      const outcome = await this.getWithRetry(current, read, maxBytes);
       if (!outcome.ok) return failed(outcome.failure);
       const raw = outcome.raw;
 
@@ -398,7 +427,6 @@ export class Fetcher {
       }
 
       const contentType = raw.headers["content-type"] ?? null;
-      const textual = contentType !== null && isTextual(contentType);
       return {
         url,
         finalUrl: current,
@@ -408,8 +436,8 @@ export class Fetcher {
         headers: raw.headers,
         responseMs: raw.responseMs,
         totalMs: raw.totalMs,
-        body: raw.body !== null && textual ? decodeBody(raw.body, contentType) : null,
-        bytes: raw.body === null ? null : raw.body.length,
+        body: raw.body === null ? null : decodeBody(raw.body, contentType),
+        bytes: raw.body === null ? parseContentLength(raw.headers) : raw.body.length,
         transferBytes: parseContentLength(raw.headers),
         truncated: raw.truncated,
         contentType,
@@ -420,9 +448,10 @@ export class Fetcher {
   /**
    * Size and header probe for an asset or external link: HEAD first, GET with
    * byte counting when HEAD is refused (405, 501) or has no Content-Length.
-   * Follows redirects. Responses with status 400 or above report no size.
+   * Follows redirects, but with `sameHostOnly` never to a different host. Responses with
+   * status 400 or above report no size.
    */
-  async probe(url: string): Promise<ProbeResult> {
+  async probe(url: string, opts: ProbeOptions = {}): Promise<ProbeResult> {
     let method: "GET" | "HEAD" = "HEAD";
     let current = url;
     let followed = 0;
@@ -438,7 +467,7 @@ export class Fetcher {
     });
 
     for (;;) {
-      const outcome = await this.attempt(current, method, method === "GET", 0);
+      const outcome = await this.attempt(current, method, method === "GET" ? "any" : "none", 0);
       if (!outcome.ok) return failed(outcome.failure);
       const raw = outcome.raw;
 
@@ -446,6 +475,9 @@ export class Fetcher {
         if (followed >= MAX_HOPS) return failed("too-many-redirects");
         const next = normaliseUrl(raw.location, current);
         if (next === null) return failed("other");
+        if (opts.sameHostOnly === true && new URL(next).host !== new URL(current).host) {
+          return failed("other");
+        }
         if (seen.has(next)) return failed("redirect-loop");
         seen.add(next);
         followed += 1;
@@ -486,7 +518,7 @@ export class Fetcher {
     url: string,
     method: "GET" | "HEAD" = "GET",
   ): Promise<{ status: number | null; location: string | null; failure: FetchFailure | null }> {
-    const outcome = await this.attempt(url, method, false, 0);
+    const outcome = await this.attempt(url, method, "none", 0);
     if (!outcome.ok) return { status: null, location: null, failure: outcome.failure };
     const raw = outcome.raw;
     const location =
