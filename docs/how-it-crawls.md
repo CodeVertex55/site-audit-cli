@@ -30,7 +30,9 @@ Sitemaps are taken from the `Sitemap` lines in robots.txt. When there are none, 
 - Only URLs on the audit origin are kept.
 - A sitemap on a different site is not read. A redirect from a sitemap URL is followed only within the same site: the same hostname (for example http to https) or its www or apex counterpart. A redirect to any other site is not followed and the sitemap is recorded as not read.
 - A sitemap is read as a stream of tags, not as a tree. Only `loc` elements directly inside `url` (or `sitemap` in an index) are used, and reading stops at a nesting depth of 16.
-- When robots.txt names no sitemap and `/sitemap.xml` answers with an HTML page that does not parse as a sitemap, no sitemap file is recorded. Many sites answer every path with a page.
+- Element names are compared by local name, so a prefixed sitemap such as `<sm:urlset>` is read. A `loc` counts only when its prefix is the root's, so extension elements such as `image:loc` are not taken as pages.
+- When robots.txt names no sitemap, `/sitemap.xml` is not requested if robots.txt disallows it. When it answers with an HTML page that does not parse as a sitemap, no sitemap file is recorded. Many sites answer every path with a page.
+- Sitemap files that robots.txt names, those a sitemap index lists, and the same-site redirect targets of any sitemap URL are read even when robots.txt disallows their paths. This is the one case where the tool requests a path on the audited site that robots.txt disallows.
 
 With `--ignore-robots`, robots.txt is still read for its `Sitemap` lines, but its rules are not applied.
 
@@ -43,8 +45,8 @@ The crawl is breadth first. The start URL is at depth 0. Links found on a page a
 - URLs on another origin are not requested. With `--check-external` they are checked as external links, but never crawled.
 - URLs whose path matches an `--exclude` pattern are never requested. The pattern must match the whole path. `*` matches any characters except `/`, and `**` matches any characters.
 - URLs that robots.txt disallows are never requested. Every report format counts them in the scope block, and the JSON report lists them in `scope.blockedByRobots`.
-- A response whose `Content-Type` is not HTML is recorded as a resource and is not parsed. Its body is not downloaded. Resources do not count against `--max-pages`, but they have a cap of their own of the same size, so at most `--max-pages` HTML pages and `--max-pages` other files are fetched.
-- The crawl stops when either cap is reached. The report says how many discovered URLs were left uncrawled.
+- A response whose `Content-Type` is not HTML is recorded as a resource and is not parsed. A text body, such as XML, JSON or plain text, is read up to 5 MB like any page. Any other body is not downloaded. Resources do not count against `--max-pages`, but they have a cap of their own of the same size, so at most `--max-pages` HTML pages and `--max-pages` other files are fetched.
+- Both caps apply to the same crawl loop, which stops when either is reached, so a site whose first links are mostly files can leave HTML pages uncrawled. The report says how many discovered URLs were left uncrawled.
 
 ### Fetching
 
@@ -52,7 +54,7 @@ The crawl is breadth first. The start URL is at depth 0. Links found on a page a
 - The headers sent are `User-Agent` and `Accept`. The runtime decides `Accept-Encoding`. No cookies are stored or sent, and there is no `Authorization` header.
 - Redirects are followed by the crawler, up to 10 hops. A URL that repeats in the chain is a loop. A redirect that leaves the audit origin is not followed during the crawl.
 - "Response time" is the time from sending the request to receiving the response headers. It is measured once, from the machine that runs the audit.
-- Only HTML, XML, plain text and JSON bodies are downloaded, up to 5 MB. A longer body is cut at 5 MB, parsed as far as it goes, and flagged as truncated. For any other body the size is taken from `Content-Length`, and the body is not read.
+- Only text bodies (HTML, XML, plain text, JSON and other `text/` types) are downloaded, up to 5 MB. A longer body is cut at 5 MB, parsed as far as it goes, and flagged as truncated. For any other body the size is taken from `Content-Length`, and the body is not read.
 - Bodies are decoded with the charset from `Content-Type`, then from a `<meta charset>` near the top of the document, then as UTF-8.
 - The parser keeps the facts that the checks need for each page, not the document tree.
 
@@ -74,9 +76,10 @@ The parser does not repair markup the way a browser does. Three cases are known:
 
 All requests to a host go through one gate. The gate spaces the starts of requests to that host by at least the delay, whatever the concurrency. With the defaults that is at most one new request per second, with up to 2 in flight.
 
-- `--delay` sets the gap in milliseconds. A `Crawl-delay` in the audited site's robots.txt that is larger than `--delay` wins. A `Crawl-delay` above 30 seconds is cut to 30 seconds and the tool says so on stderr. The applied `Crawl-delay` is shown in the scope block of the report. `--ignore-robots` ignores `Crawl-delay` too.
+- `--delay` sets the gap in milliseconds. A `Crawl-delay` in the audited site's robots.txt that is larger than `--delay` wins. When it does, a note on stderr says so and the scope block of the report shows it. A `Crawl-delay` above 30 seconds is cut to 30 seconds and the tool says that too. `--ignore-robots` ignores `Crawl-delay`.
 - `--concurrency` sets how many requests to one host may be in flight.
 - Other hosts are contacted for the sibling host probe, a redirect of the http variant probe to the sibling host, redirects of robots.txt and sitemaps within the same site, and with `--check-external` external links and third-party asset sizes. Each of those hosts gets one request at a time and the `--delay` gap. Their robots.txt is not read and their `Crawl-delay` is not applied.
+- A URL on the audited hostname under another scheme or port, such as an `http://` image on an `https` site, is not another host: it shares the audit host's gate and its pace.
 
 ### 429 and 503
 
@@ -92,17 +95,18 @@ Asset size requests, external link checks and the http variant, sibling host and
 - A robots.txt that answers with a 5xx status, or that cannot be fetched, makes the site count as disallowed. The run ends with exit code 3 unless `--ignore-robots` is used.
 - A robots.txt that redirects to a different site is not followed. It is treated as unreadable, which means exit code 3 unless `--ignore-robots` is used.
 - A robots.txt redirect within the same site, such as http to https or www to apex, is followed.
-- robots.txt is read as text whatever its `Content-Type`, up to 512 KB. Rules after the first 512 KB are ignored, and a note on stderr says so.
+- robots.txt is read as text whatever its `Content-Type`, up to 512 KB. Rules after the first 512 KB are ignored, the line cut at that point is dropped so a shortened rule cannot change meaning, and a note on stderr says so.
+- The rules are matched by path, so they also apply to URLs on the audited hostname under another scheme or port. Such an asset or external link that the rules disallow is not requested, and a redirect that lands on a disallowed path is not followed. With `--ignore-robots` only the pacing applies.
 
 ## Assets
 
 The crawled pages name images, scripts and stylesheets. Each unique URL is measured once across the whole run, in the order first seen, up to `--max-assets`.
 
 - The first request is `HEAD`. When the answer has no `Content-Length`, or the server rejects `HEAD` with 405 or 501, the tool uses `GET` and counts the bytes up to 5 MB, then stops reading.
-- For a script or stylesheet whose `HEAD` answer has no `Content-Encoding` and a size over 1024 bytes, the tool makes one `GET`, reads its headers and cancels the body, because servers that compress on the fly often skip `HEAD`. The encoding and size come from that answer.
+- For a script or stylesheet whose `HEAD` answer has no `Content-Encoding` and a size over 1024 bytes, the tool makes one `GET`, reads its headers and cancels the body, because servers that compress on the fly often skip `HEAD`. The encoding comes from that `GET` answer. The size comes from it when it states one, else from the `HEAD` answer.
 - An answer with status 400 or above gives no size.
 - Same-origin assets obey robots.txt and `--exclude`, and their redirects are followed only within the audit origin. Blocked assets are not requested.
-- Third-party assets are measured only with `--check-external`. Their redirects are followed only on the same host. Otherwise they are counted as not measured, and the report shows the count.
+- Third-party assets are measured only with `--check-external`. Their redirects are followed only on the same host. Otherwise they are counted as not measured, and the report shows the count. An asset on the audited hostname under another scheme or port follows the audited site's robots.txt rules, as described above.
 - Fonts and files that a stylesheet loads are not found, because stylesheets are not parsed.
 
 The size, content type, content encoding and cache headers of each asset feed the performance checks.
@@ -111,7 +115,7 @@ The size, content type, content encoding and cache headers of each asset feed th
 
 These requests describe the site as a whole. A probe can take more than one request: redirects on the audited site are followed as described for each, and the soft 404 probe retries a throttling answer.
 
-- **http variant.** When the audit origin is `https`, a `GET` to `http://<host>/`. Redirects that stay on the same site are followed, at most three requests in all. The result is yes when a redirect points at an `https` URL, no when the chain ends in a 2xx answer over plain HTTP, and unknown otherwise (a failure, a 4xx or 5xx answer, or a redirect off the site). Response bodies are not read.
+- **http variant.** When the audit origin is `https` on the default port, a `GET` to `http://<host>/`. Redirects that stay on the same site are followed, at most three requests in all. The result is yes when a redirect points at an `https` URL on the same site, no when the chain ends in a 2xx answer over plain HTTP, and unknown otherwise (a failure, a 4xx or 5xx answer, a redirect off the site, or a URL that robots.txt disallows, which is not requested). An `https` origin on another port is not probed. Response bodies are not read.
 - **Sibling host.** One `GET` to the `www` or apex counterpart of the host, for example `www.example.com` when the audit host is `example.com`, without following redirects. It records whether the sibling redirects to the audit host (good), answers 200 itself (two hosts serve the site), or something else. It is skipped for IP addresses, `localhost`, single-label hosts and subdomains other than `www`, such as `shop.example.com`.
 - **Soft 404.** A `GET` to a path that cannot exist, made of `/site-audit-cli-probe-` and 16 random hexadecimal characters. It follows redirects within the audit origin and retries 429 and 503 like a page. A 200 answer means the site returns normal pages for missing URLs.
 - **Favicon.** Skipped when a crawled page has an icon link. Otherwise, when robots.txt allows it, a `HEAD` (or `GET` if `HEAD` is refused) to `/favicon.ico`, following redirects within the audit origin. A 200 answer means there is a favicon.
@@ -120,7 +124,7 @@ A probe that fails, or is answered with 429 or 503, is recorded as unknown, and 
 
 ## External links
 
-Only with `--check-external`. Each unique external URL is checked with `HEAD`, and with a second request, a `GET`, when the server answers `HEAD` with 405 or 501. Redirects are not followed, and the answer is recorded as it came. Each host has one request at a time and the `--delay` gap. A failure to reach an external URL is a finding. A status that often means "automated requests refused", such as 403, and any status outside 100 to 599, is reported as could not verify, with info severity.
+Only with `--check-external`. A link on the audited hostname under another scheme or port that robots.txt disallows is not requested and is recorded as not checked. Each other unique external URL is checked with `HEAD`, and with a second request, a `GET`, when the server answers `HEAD` with 405 or 501. Redirects are not followed, and the answer is recorded as it came. Each host has one request at a time and the `--delay` gap. A failure to reach an external URL is a finding. A status that often means "automated requests refused", such as 403, and any status outside 100 to 599, is reported as could not verify, with info severity.
 
 ## What stays on your machine
 

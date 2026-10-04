@@ -134,7 +134,7 @@ type LighthousePage = {
 - `checkExternal`: true when `--check-external` was used.
 - `assetsNotMeasured`: how many assets have no measured size, because they are third party without `--check-external`, over the `--max-assets` cap, blocked by robots.txt or `--exclude`, or did not answer with a size.
 - `delayRaised`: true when a host kept answering 429 or 503 and its delay was doubled.
-- `crawlDelayMs`: the Crawl-delay from the audited site's robots.txt that was applied, in milliseconds and capped at 30000, or `null` when robots.txt sets none or `--ignore-robots` was used.
+- `crawlDelayMs`: the Crawl-delay from the audited site's robots.txt, in milliseconds and capped at 30000, when it sets the pace because it is larger than `--delay`. `null` when robots.txt sets none, when it is not larger than `--delay`, or when `--ignore-robots` was used.
 - `groups`: the check groups that ran.
 - `notSeen`: the fixed list of what a static HTTP audit cannot see.
 

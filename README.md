@@ -52,7 +52,7 @@ The full list, with the reason, the fix and the threshold for each check, is in 
 
 ## Limits
 
-- It stops at `--max-pages` HTML pages. Linked files that are not HTML have a cap of their own, equal to `--max-pages`. The report says how many discovered URLs were left uncrawled.
+- It stops at `--max-pages` HTML pages. Linked files that are not HTML have a cap of their own, equal to `--max-pages`. Both caps apply to the same crawl loop, which stops when either is reached, so a site whose first links are mostly files can leave HTML pages uncrawled. The report says how many discovered URLs were left uncrawled.
 - A response body is read up to 5 MB. A longer page is cut there and reported as truncated.
 - At most 5 sitemap files are read and at most 5000 sitemap URLs are kept.
 - A page that nests elements deeper than 256 levels or has more than 500000 nodes is read up to that point and reported as truncated. Sloppy markup with very many unclosed tags can reach the nesting limit.
@@ -65,15 +65,15 @@ The full list, with the reason, the fix and the threshold for each check, is in 
 
 - It sends only GET and HEAD requests.
 - It identifies itself with its own user agent, `site-audit-cli/<version> (+https://github.com/talha55/site-audit-cli)`. You can change the header with `--user-agent`. robots.txt is matched against the token `site-audit-cli`.
-- For the audited site it reads robots.txt before the start page and obeys its rules and its `Crawl-delay`. A start URL that robots.txt disallows is never requested, and no other disallowed URL is fetched. Skipped URLs are counted in every report format and listed in the JSON report.
-- It sends at most one new request per second to a host by default, with up to two in flight. A `Crawl-delay` larger than `--delay` wins, up to 30 seconds. The applied `Crawl-delay` is shown in the scope block of the report, and notes such as a capped `Crawl-delay` or a moved origin are printed on stderr.
+- For the audited site it reads robots.txt before the start page and obeys its rules. A URL on the audited host that its robots.txt disallows is not requested, whatever its scheme or port, with one exception: sitemap files (those robots.txt names, those a sitemap index lists, and the same-site redirect targets of any sitemap URL) are read even when their paths are disallowed. A guessed `/sitemap.xml` is not requested when robots.txt disallows it. A start URL that robots.txt disallows is never requested. Skipped URLs are counted in every report format and listed in the JSON report.
+- It sends at most one new request per second to a host by default, with up to two in flight. A robots.txt `Crawl-delay` larger than `--delay` wins, up to 30 seconds. When it does, a note on stderr says so and the scope block of the report shows it. Other notes, such as a moved origin, are printed on stderr too.
 - It backs off on 429 and 503. It waits for `Retry-After` (up to 60 seconds, 5 seconds when the header is missing), retries up to twice, and after repeated 429 or 503 answers it doubles that host's delay once for the rest of the run.
 - The crawler stores and sends no cookies, and it sends no `Authorization` header. It never submits a form.
 - If the start URL redirects to another origin, the audit moves there and says so. It may move up to three times while it stays on the same site (for example from `http://example.com` to `https://www.example.com`), reading each new origin's robots.txt first, and once to a different site.
 - Besides the audited origin it contacts a few other hosts: the `www` or apex counterpart of the host, which the plain-HTTP probe may also reach through a redirect, and with `--check-external` the hosts of external links and third-party assets. Other hosts get one request at a time with the same `--delay` gap. Their robots.txt is not read.
-- Requests to other hosts never follow a redirect to a different host. Redirects of robots.txt and sitemaps are followed only within the same site: the same hostname (for example http to https) or its www or apex counterpart.
-- Linked files that are not HTML, such as PDFs or images, are fetched only up to a cap equal to `--max-pages`, and their bodies are not downloaded.
-- A few probes describe the site as a whole: the plain-HTTP version of the home page, the `www` or apex counterpart, a random path that should not exist (to spot soft 404 pages) and `/favicon.ico`. A probe can take more than one request: redirects on the audited site are followed and throttling answers are retried.
+- Requests to other hosts never leave the site they were sent to. URLs on the audited host under another scheme or port, such as `http://` links on an `https` site, follow the audited site's robots.txt rules and its pace. Redirects of robots.txt and sitemaps are followed only within the same site: the same hostname (for example http to https) or its www or apex counterpart.
+- Linked files that are not HTML are fetched only up to a cap equal to `--max-pages`. Bodies that are not text, such as PDFs or images, are not downloaded. Linked XML, JSON and plain-text files are read up to the 5 MB cap.
+- A few probes describe the site as a whole: the plain-HTTP version of the home page, the `www` or apex counterpart, a random path that should not exist (to spot soft 404 pages) and `/favicon.ico`. A probe can take more than one request: redirects on the audited site are followed and throttling answers are retried. A probe whose URL robots.txt disallows is not sent.
 - `--ignore-robots` is for sites you own or have permission to audit. The report shows a notice when it is used.
 - `--lighthouse` loads pages in a real browser, which contacts the third parties those pages use and may set cookies in that browser.
 

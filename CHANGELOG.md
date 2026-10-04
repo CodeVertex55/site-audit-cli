@@ -5,9 +5,9 @@
 First release.
 
 - Polite crawler: reads the audited site's robots.txt first, obeys `Allow`, `Disallow` and `Crawl-delay`, spaces requests per host, backs off on 429 and 503, sends only GET and HEAD, stores and sends no cookies.
-- Besides the audited origin it contacts the `www` or apex counterpart of the host for the host and plain-HTTP probes. `--check-external` allows external links and third-party assets. Requests to other hosts never follow a redirect to a different host.
-- Linked files that are not HTML are fetched up to a cap equal to `--max-pages`, without downloading their bodies.
-- Notes such as a capped `Crawl-delay` or a moved origin are printed on stderr, and the applied `Crawl-delay` is shown in the scope block of every report.
+- Besides the audited origin it contacts the `www` or apex counterpart of the host for the host and plain-HTTP probes. `--check-external` allows external links and third-party assets. Requests to other hosts never leave the site they were sent to, and URLs on the audited host under another scheme or port follow the audited site's robots.txt rules and pace.
+- Linked files that are not HTML are fetched up to a cap equal to `--max-pages`. Bodies that are not text are not downloaded.
+- Notes such as a governing or capped `Crawl-delay` or a moved origin are printed on stderr, and a robots.txt `Crawl-delay` that sets the pace is shown in the scope block of every report.
 - 69 checks in four groups: 30 SEO, 17 health, 15 performance and 7 accessibility (static checks only, not an accessibility audit). Each finding names the check, the affected pages and a plain fix.
 - No score. Reports list findings with their own severity, a "Fix first" list, and a fixed list of what a static HTTP audit does not see.
 - Four report formats: text, JSON, Markdown and one self-contained HTML file with light and dark themes and a print stylesheet.
