@@ -2,3 +2,5 @@ dist
 coverage
 examples
 docs/checks.md
+.*/
+!.github/
