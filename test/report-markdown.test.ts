@@ -66,6 +66,12 @@ describe("renderMarkdown structure", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
+  test("fix first states the full ordering and exclusion rule", () => {
+    expect(out).toContain(
+      "Ordered by severity, then by number of affected pages. Info findings are not counted, and checks whose findings are all info are left out.",
+    );
+  });
+
   test("fix first is a numbered list", () => {
     expect(out).toMatch(/^1\. \*\*Page has no title\*\* \(`SEO-TITLE-001`, error, affected: 12\)/m);
     expect(out).toMatch(/^2\. \*\*Images without width and height\*\*/m);

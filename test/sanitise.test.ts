@@ -44,6 +44,13 @@ describe("clean", () => {
     expect(clean("caf\u00e9 \u4e2d\u6587")).toBe("caf\u00e9 \u4e2d\u6587");
   });
 
+  test("removes Unicode tag characters, the soft hyphen and the Arabic letter mark", () => {
+    const tags = "\u{E0041}\u{E0062}\u{E007F}";
+    expect(clean(`a${tags}b\u00adc\u061cd`)).toBe("abcd");
+    expect(clean(`x ${tags} y`)).toBe("x y");
+    expect(clean("\u{1F600}\u{E0020}\u{1F600}")).toBe("\u{1F600}\u{1F600}");
+  });
+
   test("collapses every kind of whitespace and trims", () => {
     expect(clean("  a\u00a0\u00a0b\r\nc\u2028d  ")).toBe("a b c d");
     expect(clean("   ")).toBe("");
@@ -98,6 +105,9 @@ describe("escapeMarkdown", () => {
     expect(escapeMarkdown("+ item")).toBe("\\+ item");
     expect(escapeMarkdown("12. item")).toBe("12\\. item");
     expect(escapeMarkdown("a - b + c 1. d")).toBe("a - b + c 1. d");
+    expect(escapeMarkdown("1) item")).toBe("1\\) item");
+    expect(escapeMarkdown("12) item")).toBe("12\\) item");
+    expect(escapeMarkdown("a 1) b")).toBe("a 1) b");
   });
 });
 

@@ -102,6 +102,12 @@ describe("renderText structure", () => {
     expect(out.endsWith("\n")).toBe(true);
   });
 
+  test("fix first states the full ordering and exclusion rule", () => {
+    expect(out).toContain(
+      "Ordered by severity, then by number of affected pages. Info findings are not counted, and checks whose findings are all info are left out.",
+    );
+  });
+
   test("states when there are no errors or warnings to fix first", () => {
     const result = makeResult();
     const out2 = renderText({ ...result, summary: { ...result.summary, fixFirst: [] } });
@@ -292,6 +298,14 @@ describe("durationText", () => {
     expect(durationText("2026-10-04T10:00:00.000Z", "2026-10-04T10:00:12.300Z")).toBe(
       "12.3 seconds",
     );
+  });
+
+  test("does not show 60.0 seconds at the minute boundary", () => {
+    expect(durationText("2026-10-04T10:00:00.000Z", "2026-10-04T10:00:59.940Z")).toBe(
+      "59.9 seconds",
+    );
+    expect(durationText("2026-10-04T10:00:00.000Z", "2026-10-04T10:00:59.960Z")).toBe("1 minute");
+    expect(durationText("2026-10-04T10:00:00.000Z", "2026-10-04T10:01:59.600Z")).toBe("2 minutes");
   });
 
   test("shows minutes and whole seconds from a minute up", () => {

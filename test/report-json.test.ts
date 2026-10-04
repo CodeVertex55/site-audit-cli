@@ -25,6 +25,16 @@ describe("renderJson", () => {
     expect(out).not.toContain("\u001b");
   });
 
+  test("writes tag characters, the soft hyphen and the Arabic letter mark as escapes", () => {
+    const base = makeResult();
+    const note = "x\u{E0041}y\u00adz\u061cw";
+    const result = makeResult({ scope: { ...base.scope, originNote: note } });
+    const out = renderJson(result);
+    expect(out).not.toMatch(/[\u{E0000}-\u{E007F}\u00ad\u061c]/u);
+    expect(out).toContain("x\\udb40\\udc41y\\u00adz\\u061cw");
+    expect(JSON.parse(out)).toEqual(result);
+  });
+
   test("does not turn escaped backslashes into extra escapes", () => {
     const base = makeResult();
     const result = makeResult({ scope: { ...base.scope, originNote: "a\\u202eb \u202e c" } });

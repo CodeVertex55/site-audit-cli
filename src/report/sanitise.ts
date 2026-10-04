@@ -25,12 +25,19 @@ function isUnsafe(code: number): boolean {
   return (
     code < 0x20 ||
     (code >= 0x7f && code <= 0x9f) ||
+    code === 0xad ||
+    code === 0x61c ||
     code === 0x180e ||
     (code >= 0x200b && code <= 0x200f) ||
     (code >= 0x202a && code <= 0x202e) ||
     (code >= 0x2060 && code <= 0x2069) ||
     code === 0xfeff
   );
+}
+
+/** The Unicode tag characters, U+E0000 to U+E007F, which render as nothing. */
+function isTagCharacter(point: number): boolean {
+  return point >= 0xe0000 && point <= 0xe007f;
 }
 
 /** Where the control string opened at `from` ends, or -1 when no terminator follows. */
@@ -92,6 +99,20 @@ function tidy(text: string): string {
     }
     if (isUnsafe(code)) {
       i++;
+      continue;
+    }
+    if (code >= 0xd800 && code <= 0xdbff) {
+      // A surrogate pair is one character; Unicode tag characters are invisible and dropped.
+      const point = text.codePointAt(i) ?? code;
+      const width = point > 0xffff ? 2 : 1;
+      if (isTagCharacter(point)) {
+        i += width;
+        continue;
+      }
+      if (pendingSpace) out += " ";
+      pendingSpace = false;
+      out += text.slice(i, i + width);
+      i += width;
       continue;
     }
     if (pendingSpace) out += " ";
@@ -157,11 +178,11 @@ export function escapeMarkdownInline(value: string): string {
   return value.replace(/[\\`*_[\]<>|#]/g, "\\$&");
 }
 
-/** `escapeMarkdownInline`, plus a list marker (`-`, `+` or a number and a dot) at the start. */
+/** `escapeMarkdownInline`, plus a list marker (`-`, `+`, or a number and a dot or bracket) at the start. */
 export function escapeMarkdown(value: string): string {
   const escaped = escapeMarkdownInline(value);
   if (escaped.startsWith("-") || escaped.startsWith("+")) return `\\${escaped}`;
-  return escaped.replace(/^(\d+)\./, "$1\\.");
+  return escaped.replace(/^(\d+)([.)])/, "$1\\$2");
 }
 
 export function isHttpUrl(value: string): boolean {

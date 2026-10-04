@@ -13,7 +13,8 @@ import { clean, cleanUrl } from "./sanitise.js";
  * share. Every function returns plain, cleaned strings. Each format escapes them its own way.
  */
 
-export const FIX_FIRST_NOTE = "Ordered by severity, then by number of affected pages.";
+export const FIX_FIRST_NOTE =
+  "Ordered by severity, then by number of affected pages. Info findings are not counted, and checks whose findings are all info are left out.";
 export const NO_FIX_FIRST = "No errors or warnings to fix first.";
 export const NO_FAILED_CHECKS = "No failed checks.";
 export const NOT_AVAILABLE = "not available";
@@ -36,7 +37,8 @@ const NOTE_MAX = 400;
 export function durationText(startedAt: string, finishedAt: string): string {
   const ms = Date.parse(finishedAt) - Date.parse(startedAt);
   if (Number.isNaN(ms) || ms < 0) return NOT_AVAILABLE;
-  if (ms < 60_000) return `${(Math.round(ms / 100) / 10).toFixed(1)} seconds`;
+  const tenths = Math.round(ms / 100);
+  if (tenths < 600) return `${(tenths / 10).toFixed(1)} seconds`;
   const total = Math.round(ms / 1000);
   const minutes = Math.floor(total / 60);
   const seconds = total % 60;
