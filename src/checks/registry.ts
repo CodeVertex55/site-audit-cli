@@ -1,10 +1,14 @@
 import type { AuditResult, CheckDef, Group, SiteContext } from "../types.js";
 import { htmlPages } from "./helpers.js";
+import { HEALTH_CHECKS } from "./health.js";
+import { PERFORMANCE_CHECKS } from "./performance.js";
 import { SEO_CHECKS } from "./seo.js";
 
 /** Every check, in the order seo, health, performance, accessibility. */
 export const CHECKS: readonly CheckDef[] = [
   ...SEO_CHECKS.map((spec): CheckDef => ({ ...spec, group: "seo" })),
+  ...HEALTH_CHECKS.map((spec): CheckDef => ({ ...spec, group: "health" })),
+  ...PERFORMANCE_CHECKS.map((spec): CheckDef => ({ ...spec, group: "performance" })),
 ];
 
 export type CheckOutcome = AuditResult["checks"][number];
