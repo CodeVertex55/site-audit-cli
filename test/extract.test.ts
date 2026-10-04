@@ -90,6 +90,24 @@ describe("robots directives", () => {
     expect(doc.metaRobots).toEqual(["noindex"]);
   });
 
+  test("an unavailable_after date is not a bot prefix", () => {
+    const doc = extractDocument(html(""), URL0, {
+      "x-robots-tag": "unavailable_after: 25 Jun 2030 15:00:00, noindex",
+    });
+    expect(doc.metaRobots).toEqual(["noindex"]);
+    const withComma = extractDocument(html(""), URL0, {
+      "x-robots-tag": "unavailable_after: Sat, 25 Jun 2030 15:00:00 PST, nofollow",
+    });
+    expect(withComma.metaRobots).toEqual(["nofollow"]);
+  });
+
+  test("only a single-token prefix scopes a directive to one bot", () => {
+    const doc = extractDocument(html(""), URL0, {
+      "x-robots-tag": "googlebot-news: noindex, nosnippet",
+    });
+    expect(doc.metaRobots).toEqual([]);
+  });
+
   test("no robots information gives an empty list", () => {
     expect(extractDocument(html(""), URL0).metaRobots).toEqual([]);
   });
@@ -132,6 +150,14 @@ describe("canonicals, lang and viewport", () => {
       false,
     );
     expect(extractDocument(html(""), URL0).hasViewport).toBe(false);
+  });
+
+  test("viewport is true when any viewport meta has content", () => {
+    const doc = extractDocument(
+      html(`<meta name="viewport" content=""><meta name="viewport" content="width=device-width">`),
+      URL0,
+    );
+    expect(doc.hasViewport).toBe(true);
   });
 });
 
@@ -712,6 +738,77 @@ describe("hostile and broken markup", () => {
     const script = `<script>var s = "${"<div>".repeat(3000)}";</script><!-- ${"<div>".repeat(3000)} -->`;
     const doc = extractDocument(html("", `${script}<a href="/ok">ok</a>`), URL0);
     expect(doc.links.map((l) => l.href)).toEqual(["/ok"]);
+  });
+
+  test.each(["div", "span", "section", "a"])(
+    "<%s/> opens an element and counts toward depth",
+    (tag) => {
+      const markup = `<a href="/before">before</a>${`<${tag}/>`.repeat(100000)}<a href="/after">after</a>`;
+      const started = Date.now();
+      const doc = extractDocument(html("", markup), URL0);
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(exceedsNestingLimit(html("", markup))).toBe(true);
+      expect(doc.links.map((l) => l.href)).toEqual(["/before"]);
+    },
+  );
+
+  test("a script written as a self-closing tag still opens raw text in HTML", () => {
+    const divs = "<div>".repeat(3000);
+    expect(exceedsNestingLimit(html("", `<script/>${divs}</script>`))).toBe(false);
+    expect(exceedsNestingLimit(html("", `<script/></script>${divs}`))).toBe(true);
+  });
+
+  test("thousands of self-closing svg elements are not flagged or truncated", () => {
+    const paths = '<path d="M0 0"/>'.repeat(20000);
+    const markup = `<svg viewBox="0 0 1 1"><g>${paths}</g><circle r="1"/></svg><svg/><math><mi/></math><a href="/after">after</a>`;
+    expect(exceedsNestingLimit(html("", markup))).toBe(false);
+    const doc = extractDocument(html("", markup), URL0);
+    expect(doc.links.map((l) => l.href)).toEqual(["/after"]);
+  });
+
+  test("html tags that break out of svg count as real elements even when self-closed", () => {
+    const markup = `<svg>${"<div/>".repeat(3000)}</svg><a href="/after">after</a>`;
+    expect(exceedsNestingLimit(html("", markup))).toBe(true);
+    const inMath = `<math>${"<span/>".repeat(3000)}</math>`;
+    expect(exceedsNestingLimit(html("", inMath))).toBe(true);
+  });
+
+  test("tags inside a foreign script are markup and count toward depth", () => {
+    const markup = `<svg><script>${"<div>".repeat(3000)}</script></svg>`;
+    expect(exceedsNestingLimit(html("", markup))).toBe(true);
+  });
+
+  test("text reads stay flat when named elements are nested around large text", () => {
+    const text = "word ".repeat(120000);
+    const buttons = `${'<div role="button">'.repeat(900)}${text}`;
+    const headings = `${"<h1><div>".repeat(450)}${text}`;
+    for (const body of [buttons, headings]) {
+      const started = Date.now();
+      const doc = extractDocument(html("", body), URL0);
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(doc.wordCount).toBe(120000);
+    }
+    const doc = extractDocument(html("", buttons), URL0);
+    expect(doc.buttons).toHaveLength(900);
+    expect(doc.buttons.every((b) => b.hasName)).toBe(true);
+  });
+
+  test("link and heading text is a bounded preview of long text", () => {
+    const long = "abc ".repeat(5000);
+    const doc = extractDocument(html("", `<h2>${long}</h2><a href="/x">${long}</a>`), URL0);
+    expect(doc.headings[0]?.text.startsWith("abc abc abc")).toBe(true);
+    expect(doc.headings[0]?.text.length).toBeLessThanOrEqual(2000);
+    expect(doc.links[0]?.text.length).toBeLessThanOrEqual(2000);
+  });
+
+  test("an image with alt deep inside an otherwise empty link names it", () => {
+    const body = `<a href="/x">${"<span>".repeat(200)}<img src="/i.png" alt="Logo">${"</span>".repeat(200)}</a>`;
+    expect(extractDocument(html("", body), URL0).links[0]?.hasAccessibleName).toBe(true);
+  });
+
+  test("words split across inline elements count as in the rendered text", () => {
+    const doc = extractDocument(html("", "<p>one<b>two</b> three four</p>"), URL0);
+    expect(doc.wordCount).toBe(3);
   });
 
   test("an unparseable page url does not throw", () => {

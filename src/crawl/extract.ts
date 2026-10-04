@@ -9,7 +9,6 @@ type El = Selection extends Cheerio<infer E> ? E : never;
 const MAX_ERROR_LENGTH = 120;
 const MAX_DESCRIBE_VALUE = 40;
 const NON_LABELLED_INPUT_TYPES = new Set(["hidden", "submit", "button", "reset"]);
-const SKIPPED_TEXT_ELEMENTS = "script, style, noscript, template, svg";
 
 /** Collapse every run of whitespace to one space and trim. Linear in the input length. */
 function collapse(text: string): string {
@@ -58,15 +57,20 @@ function splitDirectives(value: string): string[] {
 }
 
 /**
- * Directives from an X-Robots-Tag value that apply to every crawler. A part with a
- * "bot: " prefix is for one crawler and is ignored, and so are the plain directives after it.
+ * Directives from an X-Robots-Tag value that apply to every crawler. A part written
+ * "bot: directive" is for one crawler and is ignored, and so are the plain directives after it.
+ * A part with a colon that is not a bot prefix (an `unavailable_after` date, or a piece of one)
+ * is dropped without scoping what follows.
  */
 function headerDirectives(value: string): string[] {
   const out: string[] = [];
   let scoped = false;
   for (const part of splitDirectives(value)) {
-    if (part.includes(":")) {
-      scoped = true;
+    const colon = part.indexOf(":");
+    if (colon !== -1) {
+      const token = part.slice(0, colon);
+      const isBotPrefix = token !== "unavailable_after" && !/\s/.test(token);
+      if (isBotPrefix) scoped = true;
     } else if (!scoped) {
       out.push(part);
     }
@@ -121,30 +125,124 @@ function firstSrcsetUrl(srcset: string): string | null {
 }
 
 // Structural view of a parsed node, enough to read text without recursion.
-type TreeNode = { type: string; data?: string; children?: TreeNode[] };
+type TreeNode = {
+  type: string;
+  name?: string;
+  data?: string;
+  attribs?: Record<string, string>;
+  children?: TreeNode[];
+};
+
+// Names, headings and link text only ever need a short preview or an emptiness test, so the
+// walks below stop early. That keeps the cost per element flat when elements are nested deeply.
+const TEXT_BUDGET = 2000;
+const SCAN_BUDGET = 20000;
+const NODE_BUDGET = 20000;
+
+function childrenOf(el: El | TreeNode): TreeNode[] {
+  // Cheerio's node types are an enum of string values; TreeNode reads the same fields.
+  return (el.children ?? []) as unknown as TreeNode[];
+}
+
+function isWhitespace(char: string): boolean {
+  const code = char.charCodeAt(0);
+  if (code <= 32) return code === 32 || (code >= 9 && code <= 13);
+  return code >= 128 && /\s/.test(char);
+}
+
+function isScriptOrStyle(node: TreeNode): boolean {
+  return node.type === "script" || node.type === "style";
+}
 
 /**
- * Text of an element in document order. Iterative, so deeply nested markup cannot overflow the
- * stack. Script and style content is skipped unless `rawText` is set.
+ * Whitespace-collapsed visible text of an element, in document order, cut at TEXT_BUDGET
+ * characters. Iterative, so deep markup cannot overflow the stack, and bounded in work.
  */
-function textContent(el: El, rawText = false): string {
-  const parts: string[] = [];
-  // Cheerio's node types are an enum of string values; TreeNode reads the same fields.
-  const stack: TreeNode[] = [...(el.children as unknown as TreeNode[])].reverse();
+function textPreview(el: El): string {
+  let out = "";
+  let pendingSpace = false;
+  let scanned = 0;
+  let visited = 0;
+  const stack: TreeNode[] = [...childrenOf(el)].reverse();
   for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
+    visited += 1;
+    if (visited > NODE_BUDGET) break;
     if (node.type === "text") {
-      parts.push(node.data ?? "");
-    } else if (
-      node.children !== undefined &&
-      (rawText || (node.type !== "script" && node.type !== "style"))
-    ) {
+      const data = node.data ?? "";
+      for (let k = 0; k < data.length; k += 1) {
+        scanned += 1;
+        if (scanned > SCAN_BUDGET) return out;
+        const char = data.charAt(k);
+        if (isWhitespace(char)) {
+          pendingSpace = out !== "";
+        } else {
+          if (pendingSpace) out += " ";
+          pendingSpace = false;
+          out += char;
+          if (out.length >= TEXT_BUDGET) return out.slice(0, TEXT_BUDGET);
+        }
+      }
+    } else if (node.children !== undefined && !isScriptOrStyle(node)) {
       for (let i = node.children.length - 1; i >= 0; i -= 1) {
         const child = node.children[i];
         if (child !== undefined) stack.push(child);
       }
     }
   }
-  return parts.join("");
+  return out;
+}
+
+/** True when an img with non-empty alt text sits inside the element. Stops after NODE_BUDGET nodes. */
+function containsImageWithAlt(el: El): boolean {
+  let visited = 0;
+  const stack: TreeNode[] = [...childrenOf(el)];
+  for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
+    visited += 1;
+    if (visited > NODE_BUDGET) return false;
+    if (node.type === "tag" && node.name === "img" && (node.attribs?.alt ?? "").trim() !== "") {
+      return true;
+    }
+    if (node.children !== undefined) {
+      for (const child of node.children) stack.push(child);
+    }
+  }
+  return false;
+}
+
+const WORD_SKIPPED_TAGS = new Set(["script", "style", "noscript", "template", "svg"]);
+
+/** Words in the visible text under `root`, in one pass. Adjacent text nodes join as in textContent. */
+function countWords(root: El): number {
+  let words = 0;
+  let inWord = false;
+  const stack: TreeNode[] = [...childrenOf(root)];
+  for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
+    if (node.type === "text") {
+      const data = node.data ?? "";
+      for (let k = 0; k < data.length; k += 1) {
+        if (isWhitespace(data.charAt(k))) {
+          inWord = false;
+        } else if (!inWord) {
+          inWord = true;
+          words += 1;
+        }
+      }
+    } else if (node.children !== undefined && !isScriptOrStyle(node)) {
+      if (node.name !== undefined && WORD_SKIPPED_TAGS.has(node.name)) continue;
+      for (let i = node.children.length - 1; i >= 0; i -= 1) {
+        const child = node.children[i];
+        if (child !== undefined) stack.push(child);
+      }
+    }
+  }
+  return words;
+}
+
+/** Text of a script element, which only holds text nodes. */
+function scriptText(el: El): string {
+  return childrenOf(el)
+    .map((node) => (node.type === "text" ? (node.data ?? "") : ""))
+    .join("");
 }
 
 const VOID_TAGS = new Set([
@@ -190,6 +288,55 @@ const AUTO_CLOSING_TAGS = new Set([
   "rp",
 ]);
 const RAW_TEXT_TAGS = new Set(["script", "style", "textarea", "title"]);
+const FOREIGN_ROOTS = new Set(["svg", "math"]);
+// HTML tags that end foreign (svg or math) content when they appear inside it.
+const FOREIGN_BREAKOUT_TAGS = new Set([
+  "b",
+  "big",
+  "blockquote",
+  "body",
+  "br",
+  "center",
+  "code",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "em",
+  "embed",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "head",
+  "hr",
+  "i",
+  "img",
+  "li",
+  "listing",
+  "menu",
+  "meta",
+  "nobr",
+  "ol",
+  "p",
+  "pre",
+  "ruby",
+  "s",
+  "small",
+  "span",
+  "strong",
+  "strike",
+  "sub",
+  "sup",
+  "table",
+  "tt",
+  "u",
+  "ul",
+  "var",
+  "font",
+]);
 const MAX_NESTING_DEPTH = 1000;
 
 function isNameChar(code: number): boolean {
@@ -247,6 +394,7 @@ function tagEnd(html: string, from: number): { end: number; selfClosing: boolean
  */
 function limitNesting(html: string): string {
   let depth = 0;
+  let foreignDepth = 0; // open svg or math elements, where "/>" really closes an element
   let i = html.indexOf("<");
   while (i !== -1 && i < html.length - 1) {
     const next = html.charCodeAt(i + 1);
@@ -269,16 +417,26 @@ function limitNesting(html: string): string {
     if (!VOID_TAGS.has(name) && !AUTO_CLOSING_TAGS.has(name)) {
       if (closing) {
         depth = Math.max(0, depth - 1);
-      } else if (!selfClosing) {
-        depth += 1;
-        if (depth > MAX_NESTING_DEPTH) return html.slice(0, i);
-        if (RAW_TEXT_TAGS.has(name)) {
-          // Skip the raw text up to the matching end tag.
-          let close = html.indexOf("</", resume);
-          while (close !== -1 && !matchesAt(html, close + 2, name))
-            close = html.indexOf("</", close + 2);
-          if (close === -1) return html;
-          resume = close;
+        if (FOREIGN_ROOTS.has(name)) foreignDepth = Math.max(0, foreignDepth - 1);
+      } else {
+        // In HTML the "/>" on a non-void element is ignored, so it opens an element. In svg and
+        // math content, and on an svg or math root itself, it closes the element.
+        const root = FOREIGN_ROOTS.has(name);
+        const inForeign = foreignDepth > 0 && !FOREIGN_BREAKOUT_TAGS.has(name);
+        if (foreignDepth > 0 && !inForeign && !root) foreignDepth = 0;
+        const opens = !((root || inForeign) && selfClosing);
+        if (opens) {
+          depth += 1;
+          if (depth > MAX_NESTING_DEPTH) return html.slice(0, i);
+          if (root) foreignDepth += 1;
+          // Foreign script, style and title are ordinary markup, only HTML ones hold raw text.
+          if (RAW_TEXT_TAGS.has(name) && !inForeign) {
+            let close = html.indexOf("</", resume);
+            while (close !== -1 && !matchesAt(html, close + 2, name))
+              close = html.indexOf("</", close + 2);
+            if (close === -1) return html;
+            resume = close;
+          }
         }
       }
     }
@@ -318,19 +476,13 @@ export function extractDocument(
   headers: Record<string, string> = {},
 ): ParsedDocument {
   const $ = load(limitNesting(html));
-  const wrap = (el: El): Selection => $(el);
-  const textOf = (el: El): string => collapse(textContent(el));
-  const hasImageWithAlt = (el: El): boolean =>
-    wrap(el)
-      .find("img")
-      .toArray()
-      .some((img) => hasText(img, "alt"));
+  const textOf = textPreview;
   const hasName = (el: El, text: string): boolean =>
     text !== "" ||
     hasText(el, "aria-label") ||
     hasText(el, "aria-labelledby") ||
     hasText(el, "title") ||
-    hasImageWithAlt(el);
+    containsImageWithAlt(el);
 
   // Base for every relative URL: a usable <base href>, else the page itself.
   let base = pageUrl;
@@ -401,7 +553,7 @@ export function extractDocument(
   for (const el of $("script").toArray()) {
     const type = lowerAttr(el, "type");
     if (type === "application/ld+json") {
-      jsonLd.push(parseJsonLd(textContent(el, true)));
+      jsonLd.push(parseJsonLd(scriptText(el)));
       continue;
     }
     const src = attrOf(el, "src");
@@ -515,14 +667,8 @@ export function extractDocument(
     }
   }
 
-  // Word count last: it removes non-visible elements from the tree.
-  const body = $("body");
-  body.find(SKIPPED_TEXT_ELEMENTS).remove();
-  const bodyElement = body.toArray()[0];
-  const bodyText = bodyElement === undefined ? "" : collapse(textContent(bodyElement));
-  const wordCount = bodyText === "" ? 0 : bodyText.split(" ").length;
-
-  const viewport = metaNamed("viewport")[0];
+  const bodyElement = $("body").toArray()[0];
+  const wordCount = bodyElement === undefined ? 0 : countWords(bodyElement);
 
   return {
     title: titleText === "" ? null : titleText,
@@ -531,7 +677,7 @@ export function extractDocument(
     metaRobots: unique(robots),
     canonicals,
     lang: htmlLang($),
-    hasViewport: viewport !== undefined && hasText(viewport, "content"),
+    hasViewport: metaNamed("viewport").some((el) => hasText(el, "content")),
     headings,
     openGraph,
     jsonLd,
