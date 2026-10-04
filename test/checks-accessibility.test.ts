@@ -95,6 +95,11 @@ describe("accessibility notice and registry", () => {
 });
 
 describe("A11Y-ALT-001", () => {
+  test("images hidden with aria-hidden or role presentation are not counted", () => {
+    const hidden = image({ hasAlt: false, alt: null, decorative: true });
+    expect(only("A11Y-ALT-001", ctxWith({ images: [hidden] })).status).toBe("pass");
+  });
+
   test("an image without alt fails, with the count and up to five image URLs", () => {
     const images = Array.from({ length: 7 }, (_, i) =>
       image({

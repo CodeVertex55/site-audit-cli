@@ -60,7 +60,7 @@
     "fixFirst": [
       {
         "checkId": "HEALTH-HTTPS-020",
-        "title": "Site is not served over HTTPS",
+        "title": "HTTP is not upgraded to HTTPS",
         "severity": "error",
         "affected": 1,
         "fix": "Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version."
@@ -129,7 +129,7 @@
       "group": "seo",
       "severity": "warning",
       "title": "Title is shared with other pages",
-      "why": "Pages with the same title are hard to tell apart in search results, and they compete for the same searches.",
+      "why": "Pages with the same title are hard to tell apart in search results and in browser tabs.",
       "fix": "Give each page its own title that describes what is unique about it.",
       "status": "fail",
       "findings": [
@@ -324,7 +324,7 @@
       "group": "seo",
       "severity": "error",
       "title": "Page has conflicting canonical links",
-      "why": "When the canonical links disagree, search engines ignore them and choose for themselves.",
+      "why": "When the canonical links disagree, search engines may ignore them and choose for themselves.",
       "fix": "Keep one canonical link per page. Check whether a plugin or theme adds a second one.",
       "status": "pass",
       "findings": []
@@ -372,7 +372,7 @@
       "group": "seo",
       "severity": "error",
       "title": "A noindex page is listed in the sitemap",
-      "why": "The sitemap says the page should be indexed while the page says it should not. Search engines report this as a conflict.",
+      "why": "The sitemap says the page should be indexed while the page says it should not, so the two signals contradict each other.",
       "fix": "Remove the page from the sitemap, or remove the noindex directive.",
       "status": "fail",
       "findings": [
@@ -420,7 +420,7 @@
       "group": "seo",
       "severity": "error",
       "title": "Page has no viewport meta tag",
-      "why": "Without a viewport tag, phones show the page zoomed out as a desktop layout. Search engines judge pages mainly by their mobile version.",
+      "why": "Without a viewport tag, phones show the page zoomed out as a desktop layout, which is hard to read and use.",
       "fix": "Add <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"> to the head.",
       "status": "pass",
       "findings": []
@@ -506,7 +506,7 @@
           "severity": "warning",
           "group": "seo",
           "url": "http://127.0.0.1:4173/form",
-          "detail": "1 of 1 JSON-LD block could not be parsed. First is block 1: Unexpected end of JSON input"
+          "detail": "A JSON-LD block is not valid JSON."
         }
       ]
     },
@@ -581,7 +581,7 @@
       "group": "seo",
       "severity": "error",
       "title": "A sitemap URL does not return status 200",
-      "why": "The sitemap should list only live pages. Broken or redirecting entries waste crawl effort and lower trust in the file.",
+      "why": "The sitemap should list only live pages. Broken or redirecting entries waste crawl effort.",
       "fix": "Remove the URL from the sitemap, or list its final address.",
       "status": "pass",
       "findings": []
@@ -699,7 +699,7 @@
       "group": "health",
       "severity": "warning",
       "title": "Internal link points at a redirect",
-      "why": "Each redirect adds a round trip for visitors and passes less of the link's value to the final page.",
+      "why": "Each redirect adds a round trip for visitors and crawlers.",
       "fix": "Update the link to point straight at the final address.",
       "status": "fail",
       "findings": [
@@ -761,7 +761,7 @@
       "id": "HEALTH-HTTPS-020",
       "group": "health",
       "severity": "error",
-      "title": "Site is not served over HTTPS",
+      "title": "HTTP is not upgraded to HTTPS",
       "why": "Plain HTTP traffic can be read and changed on the way, and browsers label such sites as not secure.",
       "fix": "Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version.",
       "status": "fail",
@@ -800,7 +800,7 @@
       "group": "health",
       "severity": "warning",
       "title": "www and apex hosts both answer without a redirect",
-      "why": "Two hosts serving the same site split links and ranking signals, and create duplicate pages.",
+      "why": "Two hosts serving the same site can split links and ranking signals between them, and create duplicate pages.",
       "fix": "Pick one host as the main one and redirect the other to it.",
       "status": "not-applicable",
       "findings": []
@@ -820,7 +820,7 @@
       "group": "health",
       "severity": "info",
       "title": "No favicon",
-      "why": "Browsers request a favicon on every visit. Without one, tabs and bookmarks show a blank icon and the server logs fill with 404s.",
+      "why": "Browsers ask for a favicon to show in tabs and bookmarks. Without one they show a generic icon, and the requests end in 404 errors.",
       "fix": "Add a favicon link to the page head, or serve a file at /favicon.ico.",
       "status": "fail",
       "findings": [
@@ -960,7 +960,7 @@
       "group": "performance",
       "severity": "error",
       "title": "HTML is served without compression",
-      "why": "Compression usually cuts the size of HTML by a large share, so pages load faster for every visitor.",
+      "why": "Compression usually cuts the size of HTML by a large share, so pages download faster.",
       "fix": "Turn on gzip or Brotli compression for HTML responses in the web server or CDN.",
       "status": "fail",
       "findings": [
@@ -1040,7 +1040,7 @@
       "group": "performance",
       "severity": "error",
       "title": "Page is very heavy",
-      "why": "Pages this large are slow on most connections and often fail to load on poor ones.",
+      "why": "Pages this large take a long time to load on slow connections and use a lot of mobile data.",
       "fix": "Compress and resize images first, then remove scripts and fonts the page does not need.",
       "status": "pass",
       "findings": []
@@ -1060,7 +1060,7 @@
       "group": "performance",
       "severity": "warning",
       "title": "Large image",
-      "why": "Large images are the most common reason a page is slow to load.",
+      "why": "Images are often the largest part of a page.",
       "fix": "Resize the image to the size it is shown at and compress it, or use a modern format such as WebP or AVIF.",
       "status": "fail",
       "findings": [
@@ -1174,7 +1174,7 @@
       "group": "accessibility",
       "severity": "warning",
       "title": "Image without an alt attribute",
-      "why": "Screen readers have nothing to say about an image with no alt attribute, and often read out the file name instead.",
+      "why": "Screen readers have nothing to say about an image with no alt attribute, and may read out the file name instead.",
       "fix": "Add an alt attribute that describes the image. Use alt=\"\" for images that are only decoration.",
       "status": "fail",
       "findings": [

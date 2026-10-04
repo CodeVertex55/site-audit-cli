@@ -40,6 +40,11 @@ export type GetOptions = {
 export type ProbeOptions = {
   /** Never follow a redirect to a different host. */
   sameHostOnly?: boolean;
+  /**
+   * When a HEAD answer has no Content-Encoding and a size over 1024 bytes, make one GET, read
+   * its headers and cancel its body: servers that compress on the fly often skip HEAD.
+   */
+  checkEncoding?: boolean;
 };
 
 export type FetcherOptions = {
@@ -57,6 +62,7 @@ const MAX_HOPS = 10;
 const MAX_RETRIES = 2;
 const ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8";
 const META_SCAN_BYTES = 2048;
+const ENCODING_CHECK_MIN_BYTES = 1024;
 
 function isRedirectStatus(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
@@ -504,6 +510,20 @@ export class Fetcher {
         if (length === null) {
           method = "GET";
           continue;
+        }
+        const unencoded = raw.headers["content-encoding"] === undefined;
+        if (opts.checkEncoding === true && unencoded && length > ENCODING_CHECK_MIN_BYTES) {
+          const get = await this.attempt(current, "GET", "none", 0);
+          if (get.ok && get.raw.status >= 200 && get.raw.status < 300) {
+            return {
+              status: get.raw.status,
+              failure: null,
+              bytes: parseContentLength(get.raw.headers) ?? length,
+              headers: get.raw.headers,
+              measured: true,
+              finalUrl: current,
+            };
+          }
         }
         return done(length);
       }

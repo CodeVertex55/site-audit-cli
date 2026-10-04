@@ -278,7 +278,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <h2>Fix first</h2>
 <p class="note">Ordered by severity, then by number of affected pages. Info findings are not counted, and checks whose findings are all info are left out.</p>
 <ol class="fix-first">
-<li><p class="lead"><span class="sev sev-error">error</span><strong>Site is not served over HTTPS</strong><code>HEALTH-HTTPS-020</code><span class="count">affected: 1</span></p><p>Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version.</p></li>
+<li><p class="lead"><span class="sev sev-error">error</span><strong>HTTP is not upgraded to HTTPS</strong><code>HEALTH-HTTPS-020</code><span class="count">affected: 1</span></p><p>Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version.</p></li>
 <li><p class="lead"><span class="sev sev-error">error</span><strong>Broken internal link</strong><code>HEALTH-LINK-001</code><span class="count">affected: 1</span></p><p>Fix the link to point at a working page, or restore the missing page and redirect it if it moved.</p></li>
 <li><p class="lead"><span class="sev sev-error">error</span><strong>HTML is served without compression</strong><code>PERF-COMP-020</code><span class="count">affected: 1</span></p><p>Turn on gzip or Brotli compression for HTML responses in the web server or CDN.</p></li>
 <li><p class="lead"><span class="sev sev-error">error</span><strong>A noindex page is listed in the sitemap</strong><code>SEO-INDEX-041</code><span class="count">affected: 1</span></p><p>Remove the page from the sitemap, or remove the noindex directive.</p></li>
@@ -310,7 +310,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <div class="check-body">
 <p class="check-id"><code>SEO-TITLE-003</code></p>
 <dl class="facts">
-<dt>Why</dt><dd>Pages with the same title are hard to tell apart in search results, and they compete for the same searches.</dd>
+<dt>Why</dt><dd>Pages with the same title are hard to tell apart in search results and in browser tabs.</dd>
 <dt>Fix</dt><dd>Give each page its own title that describes what is unique about it.</dd>
 </dl>
 <div class="table-wrap" role="region" aria-label="Findings for Title is shared with other pages" tabindex="0"><table>
@@ -416,7 +416,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <div class="check-body">
 <p class="check-id"><code>SEO-INDEX-041</code></p>
 <dl class="facts">
-<dt>Why</dt><dd>The sitemap says the page should be indexed while the page says it should not. Search engines report this as a conflict.</dd>
+<dt>Why</dt><dd>The sitemap says the page should be indexed while the page says it should not, so the two signals contradict each other.</dd>
 <dt>Fix</dt><dd>Remove the page from the sitemap, or remove the noindex directive.</dd>
 </dl>
 <div class="table-wrap" role="region" aria-label="Findings for A noindex page is listed in the sitemap" tabindex="0"><table>
@@ -461,7 +461,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <div class="table-wrap" role="region" aria-label="Findings for Structured data is not valid JSON" tabindex="0"><table>
 <thead><tr><th scope="col">Page</th><th scope="col">Detail</th><th scope="col">Evidence</th></tr></thead>
 <tbody>
-<tr><td class="url"><a href="http://127.0.0.1:4173/form" rel="noopener noreferrer nofollow">http://127.0.0.1:4173/form</a></td><td class="detail">1 of 1 JSON-LD block could not be parsed. First is block 1: Unexpected end of JSON input</td><td class="url"></td></tr>
+<tr><td class="url"><a href="http://127.0.0.1:4173/form" rel="noopener noreferrer nofollow">http://127.0.0.1:4173/form</a></td><td class="detail">A JSON-LD block is not valid JSON.</td><td class="url"></td></tr>
 </tbody>
 </table></div>
 </div>
@@ -532,6 +532,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <dl class="facts">
 <dt>Why</dt><dd>Visitors and search engines who follow the link reach an error page instead of content.</dd>
 <dt>Fix</dt><dd>Fix the link to point at a working page, or restore the missing page and redirect it if it moved.</dd>
+<dt>Heuristic</dt><dd>Statuses 429 and 503 are reported as could not verify (info), because the site was limiting requests.</dd>
 </dl>
 <div class="table-wrap" role="region" aria-label="Findings for Broken internal link" tabindex="0"><table>
 <thead><tr><th scope="col">Page</th><th scope="col">Detail</th><th scope="col">Evidence</th></tr></thead>
@@ -546,7 +547,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <div class="check-body">
 <p class="check-id"><code>HEALTH-LINK-002</code></p>
 <dl class="facts">
-<dt>Why</dt><dd>Each redirect adds a round trip for visitors and passes less of the link&#39;s value to the final page.</dd>
+<dt>Why</dt><dd>Each redirect adds a round trip for visitors and crawlers.</dd>
 <dt>Fix</dt><dd>Update the link to point straight at the final address.</dd>
 </dl>
 <div class="table-wrap" role="region" aria-label="Findings for Internal link points at a redirect" tabindex="0"><table>
@@ -575,14 +576,14 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 </div>
 </details>
 <details class="check" id="check-HEALTH-HTTPS-020" open>
-<summary><span class="sev sev-error">error</span><span class="title">Site is not served over HTTPS</span><span class="count">1 finding</span></summary>
+<summary><span class="sev sev-error">error</span><span class="title">HTTP is not upgraded to HTTPS</span><span class="count">1 finding</span></summary>
 <div class="check-body">
 <p class="check-id"><code>HEALTH-HTTPS-020</code></p>
 <dl class="facts">
 <dt>Why</dt><dd>Plain HTTP traffic can be read and changed on the way, and browsers label such sites as not secure.</dd>
 <dt>Fix</dt><dd>Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version.</dd>
 </dl>
-<div class="table-wrap" role="region" aria-label="Findings for Site is not served over HTTPS" tabindex="0"><table>
+<div class="table-wrap" role="region" aria-label="Findings for HTTP is not upgraded to HTTPS" tabindex="0"><table>
 <thead><tr><th scope="col">Page</th><th scope="col">Detail</th><th scope="col">Evidence</th></tr></thead>
 <tbody>
 <tr><td class="url">(whole site)</td><td class="detail">The site is served over plain HTTP.</td><td class="url"></td></tr>
@@ -595,7 +596,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <div class="check-body">
 <p class="check-id"><code>HEALTH-FAV-040</code></p>
 <dl class="facts">
-<dt>Why</dt><dd>Browsers request a favicon on every visit. Without one, tabs and bookmarks show a blank icon and the server logs fill with 404s.</dd>
+<dt>Why</dt><dd>Browsers ask for a favicon to show in tabs and bookmarks. Without one they show a generic icon, and the requests end in 404 errors.</dd>
 <dt>Fix</dt><dd>Add a favicon link to the page head, or serve a file at /favicon.ico.</dd>
 </dl>
 <div class="table-wrap" role="region" aria-label="Findings for No favicon" tabindex="0"><table>
@@ -678,7 +679,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <div class="check-body">
 <p class="check-id"><code>PERF-COMP-020</code></p>
 <dl class="facts">
-<dt>Why</dt><dd>Compression usually cuts the size of HTML by a large share, so pages load faster for every visitor.</dd>
+<dt>Why</dt><dd>Compression usually cuts the size of HTML by a large share, so pages download faster.</dd>
 <dt>Fix</dt><dd>Turn on gzip or Brotli compression for HTML responses in the web server or CDN.</dd>
 <dt>Heuristic</dt><dd>Only documents over 1 KB (1024 bytes) are checked, because compressing tiny files gains little.</dd>
 </dl>
@@ -730,7 +731,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <div class="check-body">
 <p class="check-id"><code>PERF-IMG-050</code></p>
 <dl class="facts">
-<dt>Why</dt><dd>Large images are the most common reason a page is slow to load.</dd>
+<dt>Why</dt><dd>Images are often the largest part of a page.</dd>
 <dt>Fix</dt><dd>Resize the image to the size it is shown at and compress it, or use a modern format such as WebP or AVIF.</dd>
 <dt>Heuristic</dt><dd>Fails above 300 KB (300000 bytes) and up to 1 MB. A rule of thumb.</dd>
 </dl>
@@ -801,8 +802,9 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <div class="check-body">
 <p class="check-id"><code>A11Y-ALT-001</code></p>
 <dl class="facts">
-<dt>Why</dt><dd>Screen readers have nothing to say about an image with no alt attribute, and often read out the file name instead.</dd>
+<dt>Why</dt><dd>Screen readers have nothing to say about an image with no alt attribute, and may read out the file name instead.</dd>
 <dt>Fix</dt><dd>Add an alt attribute that describes the image. Use alt=&quot;&quot; for images that are only decoration.</dd>
+<dt>Heuristic</dt><dd>Images marked aria-hidden=&quot;true&quot; or role=&quot;presentation&quot; are not counted, because screen readers skip them.</dd>
 </dl>
 <div class="table-wrap" role="region" aria-label="Findings for Image without an alt attribute" tabindex="0"><table>
 <thead><tr><th scope="col">Page</th><th scope="col">Detail</th><th scope="col">Evidence</th></tr></thead>

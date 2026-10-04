@@ -219,6 +219,16 @@ describe("canonical checks", () => {
     expect(ids(one(makePage()))).not.toContain("SEO-CANON-032");
   });
 
+  test("SEO-CANON-032 does not fire for a target answering 429 or 503", () => {
+    for (const status of [429, 503]) {
+      const busy = at("/busy", { status, isHtml: true, doc: null });
+      const start = makePage({ doc: { canonicals: [busy.url] } });
+      expect(ids(makeContext({ pages: [start, busy] })), String(status)).not.toContain(
+        "SEO-CANON-032",
+      );
+    }
+  });
+
   test("SEO-CANON-032 ignores a target that robots.txt kept the crawler from fetching", () => {
     const blocked = at("/private", {
       status: null,
@@ -366,11 +376,11 @@ describe("document checks", () => {
 
   test("SEO-LD-070 fires on an invalid block and not on a valid one or none", () => {
     const bad = makePage({
-      doc: { jsonLd: [{ ok: false, types: [], error: "Unexpected token" }] },
+      doc: { jsonLd: [{ ok: false, types: [], error: "not valid JSON" }] },
     });
     const out = only("SEO-LD-070", one(bad));
     expect(out.status).toBe("fail");
-    expect(out.findings[0]?.detail).toContain("Unexpected token");
+    expect(out.findings[0]?.detail).toBe("A JSON-LD block is not valid JSON.");
     const good = makePage({
       doc: { jsonLd: [{ ok: true, types: ["Organization"], error: null }] },
     });
@@ -390,7 +400,7 @@ describe("document checks", () => {
     });
     const out = only("SEO-LD-070", one(bad));
     expect(out.findings).toHaveLength(1);
-    expect(out.findings[0]?.detail).toContain("2 of 3");
+    expect(out.findings[0]?.detail).toBe("A JSON-LD block is not valid JSON.");
   });
 
   test("SEO-THIN-100 fires at 40 words and not at 400", () => {
@@ -434,6 +444,46 @@ describe("sitemap checks", () => {
   test("SEO-MAP-090 fires when no sitemap was found and not when one was", () => {
     expect(ids(withSitemap({ found: false, files: [] }))).toContain("SEO-MAP-090");
     expect(ids(withSitemap({ found: true }))).not.toContain("SEO-MAP-090");
+  });
+
+  test("SEO-MAP-090 says when no sitemap was named and none was found", () => {
+    const base = makeContext();
+    const ctx: SiteContext = {
+      ...base,
+      robots: { ...base.robots, sitemaps: [] },
+      sitemap: { found: false, urls: [], files: [] },
+    };
+    expect(only("SEO-MAP-090", ctx).findings[0]?.detail).toBe(
+      "No sitemap was named in robots.txt and none was found at /sitemap.xml.",
+    );
+  });
+
+  test("SEO-MAP-090 says when robots.txt names a sitemap that could not be read", () => {
+    const named = `${SITE}/sitemap.xml.gz`;
+    const base = makeContext();
+    const ctx: SiteContext = {
+      ...base,
+      robots: { ...base.robots, sitemaps: [named] },
+      sitemap: {
+        found: false,
+        urls: [],
+        files: [{ url: named, status: null, ok: false, note: "gzip sitemaps are skipped" }],
+      },
+    };
+    expect(only("SEO-MAP-090", ctx).findings[0]?.detail).toBe(
+      "robots.txt names a sitemap, but it could not be read: gzip sitemaps are skipped.",
+    );
+  });
+
+  test("a guessed sitemap.xml that was an HTML page leaves no file: SEO-MAP-090 fires, SEO-MAP-093 does not apply", () => {
+    const base = makeContext();
+    const ctx: SiteContext = {
+      ...base,
+      robots: { ...base.robots, sitemaps: [] },
+      sitemap: { found: false, urls: [], files: [] },
+    };
+    expect(only("SEO-MAP-090", ctx).status).toBe("fail");
+    expect(only("SEO-MAP-093", ctx).status).toBe("not-applicable");
   });
 
   test("an invalid sitemap that answered 200 gives SEO-MAP-093 only, not SEO-MAP-090", () => {
@@ -487,6 +537,15 @@ describe("sitemap checks", () => {
     const out = only("SEO-MAP-092", makeContext({ pages: [makePage(), moved] }));
     expect(out.findings.map((f) => f.url)).toEqual([moved.url]);
     expect(out.findings[0]?.evidence).toEqual([`${SITE}/new`]);
+  });
+
+  test("SEO-MAP-092 does not fire for a sitemap page answering 429 or 503", () => {
+    for (const status of [429, 503]) {
+      const busy = at("/busy", { inSitemap: true, status, doc: null });
+      expect(ids(makeContext({ pages: [makePage(), busy] })), String(status)).not.toContain(
+        "SEO-MAP-092",
+      );
+    }
   });
 
   test("SEO-MAP-092 fires for a sitemap page that failed to load", () => {

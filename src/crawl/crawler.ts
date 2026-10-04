@@ -70,7 +70,10 @@ type Opened = {
 };
 
 type Fetchers = {
-  /** Audit host, no guards. Only for the http variant probe, which follows no redirect. */
+  /**
+   * The audit host through the audit gate and other hosts one at a time, no guards. Only for the
+   * http variant probe, which checks every redirect target is on the site before requesting it.
+   */
   main: Fetcher;
   /** Audit origin, never leaves the origin or enters robots-disallowed or excluded paths. */
   crawl: Fetcher;
@@ -175,6 +178,13 @@ function sameSite(url: string, origin: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** True for an HTML body: the Content-Type says so, or the body opens with a doctype or html tag. */
+function looksLikeHtml(r: FetchResult): boolean {
+  if (isHtmlType(r.contentType)) return true;
+  const start = (r.body ?? "").slice(0, 64).trimStart().toLowerCase();
+  return start.startsWith("<!doctype html") || start.startsWith("<html");
 }
 
 /** A fetcher that follows redirects only while they stay on the origin's site. */
@@ -450,14 +460,19 @@ async function openSite(
 
 type SitemapFile = SiteContext["sitemap"]["files"][number];
 
-/** Reads sitemaps from robots.txt, else `/sitemap.xml`. An index is followed one level. */
+/**
+ * Reads sitemaps from robots.txt, else `/sitemap.xml`. An index is followed one level. A guessed
+ * `/sitemap.xml` that answers with an HTML page and does not parse as a sitemap is not recorded,
+ * since many sites answer every path with a page.
+ */
 async function loadSitemaps(
   fetcher: Fetcher,
   origin: string,
   named: string[],
   say: Say,
 ): Promise<SiteContext["sitemap"]> {
-  const candidates = named.length > 0 ? named : [`${origin}/sitemap.xml`];
+  const guessed = named.length === 0;
+  const candidates = guessed ? [`${origin}/sitemap.xml`] : named;
   const pending = [...new Set(candidates)].map((url) => ({ url, level: 0 }));
   const files: SitemapFile[] = [];
   const urls: string[] = [];
@@ -497,6 +512,7 @@ async function loadSitemaps(
         ? { kind: "invalid" as const, urls: [] }
         : parseSitemap(r.body, Math.max(1, MAX_SITEMAP_URLS - urls.length));
     if (parsed.kind === "invalid") {
+      if (guessed && item.level === 0 && looksLikeHtml(r)) continue;
       record(item.url, r.status, false, "invalid");
     } else if (parsed.kind === "index") {
       if (item.level === 0) {
@@ -762,9 +778,15 @@ function cacheControlOf(headers: Record<string, string>): string | null {
   return headers.expires === undefined ? null : "expires";
 }
 
-/** A third-party asset is never followed through a redirect to a different host. */
+/**
+ * A third-party asset is never followed through a redirect to a different host. Scripts and
+ * stylesheets get the extra compression check.
+ */
 async function probeAsset(fetcher: Fetcher, asset: AssetRecord): Promise<void> {
-  const p = await fetcher.probe(asset.url, { sameHostOnly: asset.thirdParty });
+  const p = await fetcher.probe(asset.url, {
+    sameHostOnly: asset.thirdParty,
+    checkEncoding: asset.kind === "script" || asset.kind === "stylesheet",
+  });
   if (isThrottled(p.status)) return;
   asset.status = p.status;
   if (!p.measured) return;
@@ -813,13 +835,28 @@ async function probeAssets(a: AssetArgs): Promise<void> {
 // ---------------------------------------------------------------------------
 // origin probes
 
+const MAX_VARIANT_REQUESTS = 3;
+
+/**
+ * Whether plain HTTP is upgraded on an HTTPS origin. Requests `http://host/` and follows
+ * redirects that stay on the site, at most three requests in all. True when a redirect points
+ * at https, false when the chain ends in a 2xx answer over http, and null otherwise: a failure,
+ * a 4xx or 5xx answer, a redirect off the site or a longer chain.
+ */
 async function probeHttpVariant(fetcher: Fetcher, origin: string): Promise<boolean | null> {
   const parsed = new URL(origin);
   if (parsed.protocol !== "https:") return null;
-  const r = await fetcher.single(`http://${parsed.hostname}/`);
-  if (r.status === null || isThrottled(r.status)) return null;
-  const redirected = r.status >= 300 && r.status < 400;
-  return redirected && r.location !== null && r.location.startsWith("https:");
+  let url = `http://${parsed.hostname}/`;
+  for (let i = 0; i < MAX_VARIANT_REQUESTS; i += 1) {
+    const r = await fetcher.single(url);
+    if (r.status === null) return null;
+    if (r.status >= 200 && r.status < 300) return false;
+    if (r.status < 300 || r.status >= 400 || r.location === null) return null;
+    if (r.location.startsWith("https:")) return true;
+    if (!sameSite(r.location, origin)) return null;
+    url = r.location;
+  }
+  return null;
 }
 
 /** True when the sibling answers a redirect to the audit host, false on 200, null otherwise. */
@@ -959,7 +996,6 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
       fetchImpl,
       onThrottle,
     });
-  const main = build(gate, baseFetch);
   const net: Net = {
     baseFetch,
     gate,
@@ -979,7 +1015,7 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     return robotsBlocks(url) ? "robots" : null;
   };
   const fetchers: Fetchers = {
-    main,
+    main: build(new RoutedGate(gate, otherGate, new URL(origin).host), baseFetch),
     crawl: build(gate, guardedFetch(baseFetch, reasonFor, blockedAt)),
     other: build(otherGate, baseFetch),
   };

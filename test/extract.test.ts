@@ -238,9 +238,17 @@ describe("json-ld", () => {
     for (const block of doc.jsonLd) {
       expect(block.ok).toBe(false);
       expect(block.types).toEqual([]);
-      expect(block.error).toEqual(expect.any(String));
-      expect((block.error ?? "").length).toBeLessThanOrEqual(120);
+      expect(block.error).toBe("not valid JSON");
     }
+  });
+
+  test("the error is a fixed string that carries no page content", () => {
+    const doc = extractDocument(
+      html(`<script type="application/ld+json">{"name": "Secret Shop", oops}</script>`),
+      URL0,
+    );
+    expect(doc.jsonLd[0]?.error).toBe("not valid JSON");
+    expect(doc.jsonLd[0]?.error).not.toContain("Secret");
   });
 
   test("valid JSON that is not an object has no types", () => {
@@ -320,6 +328,17 @@ describe("links", () => {
       URL0,
     );
     expect(doc.links.map((l) => l.hasAccessibleName)).toEqual([true, true, false, false, false]);
+  });
+
+  test("an svg with aria-label or a title child names the link", () => {
+    const doc = extractDocument(
+      html(
+        "",
+        `<a href="/1"><svg aria-label="Home"><path d="M0 0"/></svg></a><a href="/2"><svg><title>Cart</title><path d="M0 0"/></svg></a><a href="/3"><svg aria-label=" "><title> </title></svg></a><a href="/4"><svg><path d="M0 0"/></svg></a>`,
+      ),
+      URL0,
+    );
+    expect(doc.links.map((l) => l.hasAccessibleName)).toEqual([true, true, false, false]);
   });
 
   test("links without href are not listed and a base with a bad value is ignored", () => {
@@ -767,6 +786,17 @@ describe("documents without head or body", () => {
       URL0,
     );
     expect(doc.wordCount).toBe(3);
+  });
+
+  test("head content placed after </head> and before the body still counts as head", () => {
+    const doc = extractDocument(
+      `<html><head></head><title>T</title><link rel=canonical href=/c><script src="/a.js"></script><body><title>Late</title><script src="/b.js"></script></body></html>`,
+      URL0,
+    );
+    expect(doc.title).toBe("T");
+    expect(doc.titleCount).toBe(1);
+    expect(doc.canonicals).toEqual(["https://site.example/c"]);
+    expect(doc.scripts.map((s) => s.inHead)).toEqual([true, false]);
   });
 
   test("a head left open ends at the first content element", () => {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { runChecks } from "../src/checks/registry.js";
 import { crawlSite, type CrawlDeps } from "../src/crawl/crawler.js";
 import type { Clock } from "../src/crawl/ratelimit.js";
 import { UnreachableError } from "../src/errors.js";
@@ -436,6 +437,28 @@ describe("sitemaps", () => {
     const ctx = await crawlSite(opts(site));
     expect(ctx.sitemap.urls).toEqual([site.url("/only")]);
     expect(pageAt(ctx, site.url("/only")).depth).toBe("sitemap");
+  });
+
+  test("a guessed sitemap.xml that answers with an HTML page is not recorded as a sitemap file", async () => {
+    const site = await start({
+      "/sitemap.xml": { body: page({ title: "Home" }) },
+      "/": { body: page() },
+    });
+    const ctx = await crawlSite(opts(site));
+    expect(site.hits("/sitemap.xml")).toBe(1);
+    expect(ctx.sitemap).toEqual({ found: false, urls: [], files: [] });
+  });
+
+  test("a guessed sitemap.xml whose body is HTML under an XML type is not recorded either", async () => {
+    const site = await start({
+      "/sitemap.xml": {
+        headers: { "content-type": "application/xml" },
+        body: "\n <!DOCTYPE html><html><body>Not found</body></html>",
+      },
+      "/": { body: page() },
+    });
+    const ctx = await crawlSite(opts(site));
+    expect(ctx.sitemap.files).toEqual([]);
   });
 
   test("a gzip sitemap is skipped with a note and never requested", async () => {
@@ -1265,6 +1288,35 @@ describe("assets", () => {
     expect(ctx.assets[0]?.bytes).toBeLessThan(1500);
   });
 
+  test("a script whose HEAD answer has no encoding is checked once with GET for compression", async () => {
+    const big = "a{}".repeat(1000);
+    const site = await start({
+      "/": { body: page({ head: '<link rel="stylesheet" href="/a.css">' }) },
+      "/a.css": (req) =>
+        req.method === "HEAD"
+          ? { headers: { "content-type": "text/css" }, body: big }
+          : { headers: { "content-type": "text/css" }, body: big, gzip: true },
+    });
+    const ctx = await crawlSite(opts(site));
+    expect(site.log.filter((r) => r.path === "/a.css").map((r) => r.method)).toEqual([
+      "HEAD",
+      "GET",
+    ]);
+    expect(ctx.assets[0]).toMatchObject({ contentEncoding: "gzip", measured: true });
+    expect(ctx.assets[0]?.bytes).toBeLessThan(big.length);
+    const outcome = runChecks(ctx, ["performance"]).find((c) => c.id === "PERF-COMP-021");
+    expect(outcome?.status).toBe("pass");
+  });
+
+  test("an image whose HEAD answer has no encoding is not fetched again", async () => {
+    const site = await start({
+      "/": { body: page({ body: '<img src="/big.png" alt="b">' }) },
+      "/big.png": { headers: { "content-type": "image/png" }, body: Buffer.alloc(5000) },
+    });
+    await crawlSite(opts(site));
+    expect(site.log.filter((r) => r.path === "/big.png").map((r) => r.method)).toEqual(["HEAD"]);
+  });
+
   test("cacheControl holds the header, the word expires, or null", async () => {
     const site = await start({
       "/": {
@@ -1540,13 +1592,39 @@ describe("origin probes", () => {
       expect(run.seen.filter((s) => s === "GET http://site.example/")).toHaveLength(1);
     });
 
-    test("the http variant answering 200 or redirecting to http is not a redirect to https", async () => {
+    test("the http variant answering 200, or redirecting to an http page that answers 200, is false", async () => {
       const plain = await crawlFake({ "http://site.example/": { body: home } });
       expect(plain.probes.httpRedirectsToHttps).toBe(false);
       const sideways = await crawlFake({
         "http://site.example/": { status: 301, location: "http://site.example/home" },
+        "http://site.example/home": { body: home },
       });
       expect(sideways.probes.httpRedirectsToHttps).toBe(false);
+    });
+
+    test("the http variant follows same-site redirects until one lands on https", async () => {
+      const run = crawlFake({
+        "http://site.example/": { status: 301, location: "http://www.site.example/" },
+        "http://www.site.example/": { status: 301, location: "https://www.site.example/" },
+      });
+      const ctx = await run;
+      expect(ctx.probes.httpRedirectsToHttps).toBe(true);
+      expect(run.seen.filter((s) => s.startsWith("GET http://"))).toEqual([
+        "GET http://site.example/",
+        "GET http://www.site.example/",
+      ]);
+    });
+
+    test("the http variant answering 4xx or 5xx, or redirecting off the site, gives null", async () => {
+      const missing = await crawlFake({ "http://site.example/": { status: 404 } });
+      expect(missing.probes.httpRedirectsToHttps).toBeNull();
+      const broken = await crawlFake({ "http://site.example/": { status: 500 } });
+      expect(broken.probes.httpRedirectsToHttps).toBeNull();
+      const away = crawlFake({
+        "http://site.example/": { status: 301, location: "http://other.example/" },
+      });
+      expect((await away).probes.httpRedirectsToHttps).toBeNull();
+      expect(away.seen.filter((s) => s.includes("other.example"))).toEqual([]);
     });
 
     test("the http variant failing gives null, and an http origin gives no probe", async () => {

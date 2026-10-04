@@ -176,7 +176,7 @@ export const PERFORMANCE_CHECKS: CheckSpec[] = [
     severity: "error",
     scope: "page",
     title: "HTML is served without compression",
-    why: "Compression usually cuts the size of HTML by a large share, so pages load faster for every visitor.",
+    why: "Compression usually cuts the size of HTML by a large share, so pages download faster.",
     fix: "Turn on gzip or Brotli compression for HTML responses in the web server or CDN.",
     heuristic:
       "Only documents over 1 KB (1024 bytes) are checked, because compressing tiny files gains little.",
@@ -242,7 +242,7 @@ export const PERFORMANCE_CHECKS: CheckSpec[] = [
     severity: "error",
     scope: "page",
     title: "Page is very heavy",
-    why: "Pages this large are slow on most connections and often fail to load on poor ones.",
+    why: "Pages this large take a long time to load on slow connections and use a lot of mobile data.",
     fix: "Compress and resize images first, then remove scripts and fonts the page does not need.",
     heuristic:
       "Fails above 5 MB (5000000 bytes), counting the HTML and the assets that were measured. This replaces the 2 MB warning for the same page.",
@@ -278,7 +278,7 @@ export const PERFORMANCE_CHECKS: CheckSpec[] = [
     severity: "warning",
     scope: "site",
     title: "Large image",
-    why: "Large images are the most common reason a page is slow to load.",
+    why: "Images are often the largest part of a page.",
     fix: "Resize the image to the size it is shown at and compress it, or use a modern format such as WebP or AVIF.",
     heuristic: "Fails above 300 KB (300000 bytes) and up to 1 MB. A rule of thumb.",
     applies: hasMeasuredAssets,

@@ -80,14 +80,15 @@ export const ACCESSIBILITY_CHECKS: CheckSpec[] = [
     severity: "warning",
     scope: "page",
     title: "Image without an alt attribute",
-    why: "Screen readers have nothing to say about an image with no alt attribute, and often read out the file name instead.",
+    why: "Screen readers have nothing to say about an image with no alt attribute, and may read out the file name instead.",
     fix: 'Add an alt attribute that describes the image. Use alt="" for images that are only decoration.',
-    heuristic: null,
+    heuristic:
+      'Images marked aria-hidden="true" or role="presentation" are not counted, because screen readers skip them.',
     run: (ctx, emit) =>
       perPage(
         ctx,
         emit,
-        (doc) => doc.images.filter((i) => !i.hasAlt),
+        (doc) => doc.images.filter((i) => !i.hasAlt && !i.decorative),
         (i) => i.url ?? i.src ?? "image with no source",
         (n) => `${n} ${plural(n, "image has", "images have")} no alt attribute.`,
       ),

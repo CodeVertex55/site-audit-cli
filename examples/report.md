@@ -31,7 +31,7 @@
 
 Ordered by severity, then by number of affected pages. Info findings are not counted, and checks whose findings are all info are left out.
 
-1. **Site is not served over HTTPS** (`HEALTH-HTTPS-020`, error, affected: 1): Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version.
+1. **HTTP is not upgraded to HTTPS** (`HEALTH-HTTPS-020`, error, affected: 1): Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version.
 2. **Broken internal link** (`HEALTH-LINK-001`, error, affected: 1): Fix the link to point at a working page, or restore the missing page and redirect it if it moved.
 3. **HTML is served without compression** (`PERF-COMP-020`, error, affected: 1): Turn on gzip or Brotli compression for HTML responses in the web server or CDN.
 4. **A noindex page is listed in the sitemap** (`SEO-INDEX-041`, error, affected: 1): Remove the page from the sitemap, or remove the noindex directive.
@@ -56,7 +56,7 @@ Findings (1):
 
 - **Check:** `SEO-TITLE-003`
 - **Severity:** warning
-- **Why:** Pages with the same title are hard to tell apart in search results, and they compete for the same searches.
+- **Why:** Pages with the same title are hard to tell apart in search results and in browser tabs.
 - **Fix:** Give each page its own title that describes what is unique about it.
 
 Findings (2):
@@ -144,7 +144,7 @@ Findings (1):
 
 - **Check:** `SEO-INDEX-041`
 - **Severity:** error
-- **Why:** The sitemap says the page should be indexed while the page says it should not. Search engines report this as a conflict.
+- **Why:** The sitemap says the page should be indexed while the page says it should not, so the two signals contradict each other.
 - **Fix:** Remove the page from the sitemap, or remove the noindex directive.
 
 Findings (1):
@@ -184,7 +184,7 @@ Findings (1):
 
 | Page | Detail |
 | --- | --- |
-| http://127.0.0.1:4173/form | 1 of 1 JSON-LD block could not be parsed. First is block 1: Unexpected end of JSON input |
+| http://127.0.0.1:4173/form | A JSON-LD block is not valid JSON. |
 
 ### No robots.txt file
 
@@ -241,6 +241,7 @@ Findings (8):
 - **Severity:** error
 - **Why:** Visitors and search engines who follow the link reach an error page instead of content.
 - **Fix:** Fix the link to point at a working page, or restore the missing page and redirect it if it moved.
+- **Heuristic:** Statuses 429 and 503 are reported as could not verify (info), because the site was limiting requests.
 
 Findings (1):
 
@@ -252,7 +253,7 @@ Findings (1):
 
 - **Check:** `HEALTH-LINK-002`
 - **Severity:** warning
-- **Why:** Each redirect adds a round trip for visitors and passes less of the link's value to the final page.
+- **Why:** Each redirect adds a round trip for visitors and crawlers.
 - **Fix:** Update the link to point straight at the final address.
 
 Findings (2):
@@ -275,7 +276,7 @@ Findings (1):
 | --- | --- |
 | http://127.0.0.1:4173/chain-a | Redirect chain of 2 hops ending at http://127.0.0.1:4173/dup-a. Evidence: http://127.0.0.1:4173/chain-a; http://127.0.0.1:4173/chain-b |
 
-### Site is not served over HTTPS
+### HTTP is not upgraded to HTTPS
 
 - **Check:** `HEALTH-HTTPS-020`
 - **Severity:** error
@@ -292,7 +293,7 @@ Findings (1):
 
 - **Check:** `HEALTH-FAV-040`
 - **Severity:** info
-- **Why:** Browsers request a favicon on every visit. Without one, tabs and bookmarks show a blank icon and the server logs fill with 404s.
+- **Why:** Browsers ask for a favicon to show in tabs and bookmarks. Without one they show a generic icon, and the requests end in 404 errors.
 - **Fix:** Add a favicon link to the page head, or serve a file at /favicon.ico.
 
 Findings (1):
@@ -359,7 +360,7 @@ Findings (1):
 
 - **Check:** `PERF-COMP-020`
 - **Severity:** error
-- **Why:** Compression usually cuts the size of HTML by a large share, so pages load faster for every visitor.
+- **Why:** Compression usually cuts the size of HTML by a large share, so pages download faster.
 - **Fix:** Turn on gzip or Brotli compression for HTML responses in the web server or CDN.
 - **Heuristic:** Only documents over 1 KB (1024 bytes) are checked, because compressing tiny files gains little.
 
@@ -402,7 +403,7 @@ Findings (2):
 
 - **Check:** `PERF-IMG-050`
 - **Severity:** warning
-- **Why:** Large images are the most common reason a page is slow to load.
+- **Why:** Images are often the largest part of a page.
 - **Fix:** Resize the image to the size it is shown at and compress it, or use a modern format such as WebP or AVIF.
 - **Heuristic:** Fails above 300 KB (300000 bytes) and up to 1 MB. A rule of thumb.
 
@@ -461,8 +462,9 @@ Findings (1):
 
 - **Check:** `A11Y-ALT-001`
 - **Severity:** warning
-- **Why:** Screen readers have nothing to say about an image with no alt attribute, and often read out the file name instead.
+- **Why:** Screen readers have nothing to say about an image with no alt attribute, and may read out the file name instead.
 - **Fix:** Add an alt attribute that describes the image. Use alt="" for images that are only decoration.
+- **Heuristic:** Images marked aria-hidden="true" or role="presentation" are not counted, because screen readers skip them.
 
 Findings (1):
 

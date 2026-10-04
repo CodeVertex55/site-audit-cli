@@ -4,13 +4,14 @@
  * depth or node count (see parseBounded). Every walk below is iterative.
  *
  * htmlparser2 does not create implied html, head or body elements, so the field rules read:
- * - "In head" means inside a head element when the document has one. With no head element at
- *   all, the first title outside svg is the title and titleCount counts titles outside svg.
- * - Head content is html, head, title, meta, link, script, style, base and noscript. Scripts,
- *   stylesheets and canonical links inside a head element count as in head only when they come
- *   before the first element that is not head content, because a head left open does not hold
- *   the page. With no head element they count as in head when they come before the first body
- *   element or, with no body either, before the first element that is not head content.
+ * - Head content is html, head, title, meta, link, script, style, base and noscript. When the
+ *   document has a head element, the titles are those inside it plus those outside svg that
+ *   come before the first element that is not head content, even after </head>. Scripts,
+ *   stylesheets and canonical links count as in head when they come before that first content
+ *   element, inside the head or after it, because a head left open does not hold the page.
+ * - With no head element at all, the first title outside svg is the title and titleCount counts
+ *   titles outside svg. Scripts, stylesheets and canonical links count as in head when they come
+ *   before the first body element or, with no body either, before the first content element.
  * - wordCount reads the first body element when there is one, else the whole document without
  *   title elements (script, style, noscript, template and svg are skipped as always).
  * - Content of noscript, template, iframe, noembed, noframes and xmp is not indexed or read for
@@ -25,17 +26,8 @@ import { normaliseUrl, sameOrigin } from "./url.js";
 type Selection = ReturnType<Cheerio<never>["find"]>;
 type El = Selection extends Cheerio<infer E> ? E : never;
 
-const MAX_ERROR_LENGTH = 120;
 const MAX_DESCRIBE_VALUE = 40;
 const NON_LABELLED_INPUT_TYPES = new Set(["hidden", "submit", "button", "reset"]);
-
-/** Collapse every run of whitespace to one space and trim. Linear in the input length. */
-function collapse(text: string): string {
-  return text
-    .split(/\s+/)
-    .filter((part) => part !== "")
-    .join(" ");
-}
 
 function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
@@ -137,12 +129,14 @@ function jsonLdTypes(parsed: unknown): string[] {
   return types;
 }
 
+/** The error recorded for a block that does not parse. Fixed, so no page content is carried. */
+const JSON_LD_ERROR = "not valid JSON";
+
 function parseJsonLd(text: string): { ok: boolean; types: string[]; error: string | null } {
   try {
     return { ok: true, types: jsonLdTypes(JSON.parse(text)), error: null };
-  } catch (error) {
-    const message = error instanceof Error ? collapse(error.message) : "Invalid JSON";
-    return { ok: false, types: [], error: clip(message, MAX_ERROR_LENGTH) };
+  } catch {
+    return { ok: false, types: [], error: JSON_LD_ERROR };
   }
 }
 
@@ -269,14 +263,24 @@ function textPreview(el: El, budget: Budget): string {
   return out;
 }
 
-/** True when an img with non-empty alt text sits inside the element. Stops after NODE_BUDGET nodes or when the document budget is spent. */
-function containsImageWithAlt(el: El, budget: Budget): boolean {
+/**
+ * True when an img with non-empty alt text, or an svg with a non-empty aria-label, sits inside
+ * the element. Stops after NODE_BUDGET nodes or when the document budget is spent.
+ */
+function containsNamedImage(el: El, budget: Budget): boolean {
   let visited = 0;
   const stack: TreeNode[] = [...childrenOf(el)];
   for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
     visited += 1;
     if (visited > NODE_BUDGET || !spend(budget)) return false;
     if (node.type === "tag" && node.name === "img" && (node.attribs?.alt ?? "").trim() !== "") {
+      return true;
+    }
+    if (
+      node.type === "tag" &&
+      node.name === "svg" &&
+      (node.attribs?.["aria-label"] ?? "").trim() !== ""
+    ) {
       return true;
     }
     if (node.children !== undefined && !isOpaque(node)) {
@@ -331,9 +335,8 @@ function countWords(root: TreeNode, skipped: Set<string>): number {
 type TreeIndex = {
   root: TreeNode;
   byTag: Map<string, El[]>;
-  inHead: Set<El>; // elements under <head>
   beforeBody: Set<El>; // scripts and links before the first <body>
-  beforeContent: Set<El>; // scripts and links before the first element that is not head content
+  beforeContent: Set<El>; // head-only elements before the first element that is not head content
   titlesOutsideSvg: El[];
   insideLabel: Set<El>; // form controls under any <label>
   headings: El[];
@@ -342,7 +345,9 @@ type TreeIndex = {
   subresources: El[]; // img, script, link, iframe, video, audio and source
 };
 
-const HEAD_END: TreeNode = { type: "head-end" };
+// Elements that belong in head. Before the first content element they count as head content even
+// when they sit outside the head element, as a browser would move them there.
+const HEAD_ONLY_TAGS = new Set(["title", "meta", "link", "base", "script", "style"]);
 const LABEL_END: TreeNode = { type: "label-end" };
 const SVG_END: TreeNode = { type: "svg-end" };
 const SUBRESOURCE_TAGS = new Set(["img", "script", "link", "iframe", "video", "audio", "source"]);
@@ -368,7 +373,6 @@ function indexTree(root: TreeNode): TreeIndex {
   const index: TreeIndex = {
     root,
     byTag: new Map(),
-    inHead: new Set(),
     beforeBody: new Set(),
     beforeContent: new Set(),
     titlesOutsideSvg: [],
@@ -378,17 +382,12 @@ function indexTree(root: TreeNode): TreeIndex {
     buttons: [],
     subresources: [],
   };
-  let headDepth = 0;
   let labelDepth = 0;
   let svgDepth = 0;
   let seenBody = false;
   let seenContent = false;
   const stack: TreeNode[] = [...childrenOf(root)].reverse();
   for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
-    if (node === HEAD_END) {
-      headDepth -= 1;
-      continue;
-    }
     if (node === LABEL_END) {
       labelDepth -= 1;
       continue;
@@ -404,11 +403,8 @@ function indexTree(root: TreeNode): TreeIndex {
     const sameTag = index.byTag.get(name);
     if (sameTag === undefined) index.byTag.set(name, [el]);
     else sameTag.push(el);
-    if (headDepth > 0) index.inHead.add(el);
-    if (name === "script" || name === "link") {
-      if (!seenBody) index.beforeBody.add(el);
-      if (!seenContent) index.beforeContent.add(el);
-    }
+    if ((name === "script" || name === "link") && !seenBody) index.beforeBody.add(el);
+    if (HEAD_ONLY_TAGS.has(name) && !seenContent) index.beforeContent.add(el);
     if (name === "body") seenBody = true;
     if (!HEAD_CONTENT_TAGS.has(name)) seenContent = true;
     if (name === "title" && svgDepth === 0) index.titlesOutsideSvg.push(el);
@@ -420,10 +416,7 @@ function indexTree(root: TreeNode): TreeIndex {
       if (labelDepth > 0) index.insideLabel.add(el);
     }
     if (OPAQUE_TAGS.has(name)) continue;
-    if (name === "head") {
-      headDepth += 1;
-      stack.push(HEAD_END);
-    } else if (name === "label") {
+    if (name === "label") {
       labelDepth += 1;
       stack.push(LABEL_END);
     } else if (name === "svg") {
@@ -632,7 +625,7 @@ function extractFacts(
     hasText(el, "aria-label") ||
     hasText(el, "aria-labelledby") ||
     hasText(el, "title") ||
-    containsImageWithAlt(el, budget);
+    containsNamedImage(el, budget);
 
   // Base for every relative URL: a usable <base href>, else the page itself.
   let base = pageUrl;
@@ -643,17 +636,23 @@ function extractFacts(
     href === undefined || href.trim() === "" ? null : normaliseUrl(href, base);
 
   const all = (tag: string): El[] => tree.byTag.get(tag) ?? [];
-  // Without a head element, head content is what comes before the body or the first content.
+  // With a head element, head content is what comes before the first content element, inside the
+  // head or after it. Without one, it is what comes before the body or the first content.
   const hasHead = all("head").length > 0;
   const hasBody = all("body").length > 0;
   const inHead = (el: El): boolean => {
-    if (hasHead) return tree.inHead.has(el) && tree.beforeContent.has(el);
+    if (hasHead) return tree.beforeContent.has(el);
     return hasBody ? tree.beforeBody.has(el) : tree.beforeContent.has(el);
   };
 
   // Title.
+  const outsideSvg = new Set(tree.titlesOutsideSvg);
   const titles = hasHead
-    ? all("title").filter((el) => (el.parent as TreeNode | null)?.name === "head")
+    ? all("title").filter(
+        (el) =>
+          (el.parent as TreeNode | null)?.name === "head" ||
+          (tree.beforeContent.has(el) && outsideSvg.has(el)),
+      )
     : tree.titlesOutsideSvg;
   const firstTitle = titles[0];
   const titleText = firstTitle === undefined ? "" : textOf(firstTitle);

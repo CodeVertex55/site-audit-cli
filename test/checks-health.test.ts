@@ -74,6 +74,38 @@ describe("link and redirect checks", () => {
     expect(only("HEALTH-LINK-001", ctx).status).toBe("pass");
   });
 
+  test("HEALTH-LINK-001 reports 429 and 503 as could not verify, at info severity", () => {
+    const busy = at("/busy", { status: 429, doc: null, inlinks: [`${SITE}/`] });
+    const down = at("/down", { status: 503, doc: null, inlinks: [`${SITE}/`] });
+    const out = only("HEALTH-LINK-001", makeContext({ pages: [makePage(), busy, down] }));
+    expect(out.findings.map((f) => [f.url, f.severity, f.detail])).toEqual([
+      [
+        busy.url,
+        "info",
+        "Could not verify (status 429). The site was limiting requests during the audit.",
+      ],
+      [
+        down.url,
+        "info",
+        "Could not verify (status 503). The site was limiting requests during the audit.",
+      ],
+    ]);
+    expect(out.findings[0]?.evidence).toEqual([`${SITE}/`]);
+  });
+
+  test("link and redirect checks are not applicable when every record was skipped by robots.txt", () => {
+    const blocked = at("/", { status: null, failure: "blocked-by-robots", doc: null });
+    for (const id of [
+      "HEALTH-LINK-001",
+      "HEALTH-LINK-002",
+      "HEALTH-REDIR-010",
+      "HEALTH-REDIR-011",
+      "HEALTH-FETCH-070",
+    ]) {
+      expect(only(id, makeContext({ pages: [blocked] })).status, id).toBe("not-applicable");
+    }
+  });
+
   test("HEALTH-LINK-002 reports linked redirects with the final target", () => {
     const moved = at("/old", {
       finalUrl: `${SITE}/new`,
@@ -167,20 +199,23 @@ describe("https checks", () => {
     expect(only("HEALTH-HTTPS-020", base).status).toBe("pass");
   });
 
-  test("HEALTH-HTTPS-020 fires when the HTTP origin does not redirect, and null is no finding", () => {
+  test("HEALTH-HTTPS-020 fires when the HTTP origin does not redirect, and null is not applicable", () => {
     const base = makeContext();
     const noRedirect: SiteContext = {
       ...base,
       probes: { ...base.probes, httpRedirectsToHttps: false },
     };
     const out = only("HEALTH-HTTPS-020", noRedirect);
+    expect(out.title).toBe("HTTP is not upgraded to HTTPS");
     expect(out.findings).toHaveLength(1);
-    expect(out.findings[0]?.detail).toContain("does not redirect to HTTPS");
+    expect(out.findings[0]?.detail).toBe(
+      "http://site.example/ answers without redirecting to HTTPS.",
+    );
     const unknown: SiteContext = {
       ...base,
       probes: { ...base.probes, httpRedirectsToHttps: null },
     };
-    expect(only("HEALTH-HTTPS-020", unknown).status).toBe("pass");
+    expect(only("HEALTH-HTTPS-020", unknown).status).toBe("not-applicable");
   });
 
   test("HEALTH-HTTPS-020 still applies when no page loaded", () => {
@@ -286,13 +321,13 @@ describe("host, 404 and favicon checks", () => {
     expect(only("HEALTH-HOST-023", none).status).toBe("not-applicable");
   });
 
-  test("HEALTH-HOST-023 does not fire when the probe result is unknown", () => {
+  test("HEALTH-HOST-023 is not applicable when the probe result is unknown", () => {
     const base = makeContext();
     const unknown: SiteContext = {
       ...base,
       probes: { ...base.probes, siblingHostRedirects: null },
     };
-    expect(only("HEALTH-HOST-023", unknown).status).toBe("pass");
+    expect(only("HEALTH-HOST-023", unknown).status).toBe("not-applicable");
   });
 
   test("HEALTH-404-030 fires only on a soft 404", () => {
@@ -487,6 +522,22 @@ describe("external link and fetch checks", () => {
     );
     expect(f[4]?.detail).toContain("500");
     expect(f[0]?.evidence).toEqual(used);
+  });
+
+  test("HEALTH-EXT-060 treats a status outside 100 to 599 as could not verify", () => {
+    const ctx = makeContext({
+      external: [999, 99].map((status) => ({
+        url: `https://x.example/${status}`,
+        status,
+        failure: null,
+        usedBy: [`${SITE}/`],
+      })),
+    });
+    const f = only("HEALTH-EXT-060", ctx).findings;
+    expect(f.map((x) => [x.severity, x.detail])).toEqual([
+      ["info", "Could not verify (status 999). Many sites refuse automated requests."],
+      ["info", "Could not verify (status 99). Many sites refuse automated requests."],
+    ]);
   });
 
   test("HEALTH-EXT-060 reports failures as warnings and keeps the check severity", () => {

@@ -85,6 +85,26 @@ function hasSitemapFiles(ctx: SiteContext): boolean {
   return ctx.sitemap.files.length > 0;
 }
 
+/** Statuses a site sends when it is limiting requests; such a target was not judged. */
+function isThrottled(status: number | null): boolean {
+  return status === 429 || status === 503;
+}
+
+/** Why SEO-MAP-090 fired, from what robots.txt named and what the crawler recorded. */
+function missingSitemapDetail(ctx: SiteContext): string {
+  if (ctx.robots.sitemaps.length === 0) {
+    return "No sitemap was named in robots.txt and none was found at /sitemap.xml.";
+  }
+  const named = new Set(ctx.robots.sitemaps);
+  const unread = ctx.sitemap.files.find((f) => named.has(f.url) && !f.ok);
+  const reason =
+    unread?.note ??
+    (unread?.status === null || unread === undefined ? null : `status ${unread.status}`);
+  return reason === null
+    ? "robots.txt names a sitemap, but it could not be read."
+    : `robots.txt names a sitemap, but it could not be read: ${reason}.`;
+}
+
 function originOfUrl(url: string): string | null {
   try {
     return new URL(url).origin;
@@ -130,7 +150,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     severity: "warning",
     scope: "page",
     title: "Title is shared with other pages",
-    why: "Pages with the same title are hard to tell apart in search results, and they compete for the same searches.",
+    why: "Pages with the same title are hard to tell apart in search results and in browser tabs.",
     fix: "Give each page its own title that describes what is unique about it.",
     heuristic: null,
     run: (ctx, emit) =>
@@ -249,7 +269,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     severity: "error",
     scope: "page",
     title: "Page has conflicting canonical links",
-    why: "When the canonical links disagree, search engines ignore them and choose for themselves.",
+    why: "When the canonical links disagree, search engines may ignore them and choose for themselves.",
     fix: "Keep one canonical link per page. Check whether a plugin or theme adds a second one.",
     heuristic: null,
     run: (ctx, emit) =>
@@ -274,7 +294,7 @@ export const SEO_CHECKS: CheckSpec[] = [
         for (const canonical of new Set(p.doc?.canonicals ?? [])) {
           const target = findPage(ctx, canonical);
           if (target === undefined || target === p) continue;
-          if (target.failure === "blocked-by-robots") continue;
+          if (target.failure === "blocked-by-robots" || isThrottled(target.status)) continue;
           if (target.hops.length > 0) {
             out.push(emit(p.url, "The canonical URL redirects to another address.", [canonical]));
           } else if (target.status !== 200) {
@@ -323,7 +343,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     severity: "error",
     scope: "page",
     title: "A noindex page is listed in the sitemap",
-    why: "The sitemap says the page should be indexed while the page says it should not. Search engines report this as a conflict.",
+    why: "The sitemap says the page should be indexed while the page says it should not, so the two signals contradict each other.",
     fix: "Remove the page from the sitemap, or remove the noindex directive.",
     heuristic: null,
     run: (ctx, emit) =>
@@ -380,7 +400,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     severity: "error",
     scope: "page",
     title: "Page has no viewport meta tag",
-    why: "Without a viewport tag, phones show the page zoomed out as a desktop layout. Search engines judge pages mainly by their mobile version.",
+    why: "Without a viewport tag, phones show the page zoomed out as a desktop layout, which is hard to read and use.",
     fix: 'Add <meta name="viewport" content="width=device-width, initial-scale=1"> to the head.',
     heuristic: null,
     run: (ctx, emit) =>
@@ -416,16 +436,8 @@ export const SEO_CHECKS: CheckSpec[] = [
     run: (ctx, emit) =>
       indexablePages(ctx).flatMap((p) => {
         const blocks = p.doc?.jsonLd ?? [];
-        const bad = blocks.flatMap((b, i) => (b.ok ? [] : [{ number: i + 1, error: b.error }]));
-        const first = bad[0];
-        if (first === undefined) return [];
-        const reason = first.error ? `: ${first.error}` : ".";
-        return [
-          emit(
-            p.url,
-            `${bad.length} of ${blocks.length} JSON-LD ${plural(blocks.length, "block", "blocks")} could not be parsed. First is block ${first.number}${reason}`,
-          ),
-        ];
+        if (blocks.every((b) => b.ok)) return [];
+        return [emit(p.url, "A JSON-LD block is not valid JSON.")];
       }),
   }),
   seo({
@@ -487,7 +499,7 @@ export const SEO_CHECKS: CheckSpec[] = [
     run: (ctx, emit) =>
       ctx.sitemap.found || ctx.sitemap.files.some((f) => f.status === 200)
         ? []
-        : [emit(null, "No sitemap was named in robots.txt and none was found at /sitemap.xml.")],
+        : [emit(null, missingSitemapDetail(ctx))],
   }),
   seo({
     id: "SEO-MAP-091",
@@ -508,13 +520,13 @@ export const SEO_CHECKS: CheckSpec[] = [
     severity: "error",
     scope: "site",
     title: "A sitemap URL does not return status 200",
-    why: "The sitemap should list only live pages. Broken or redirecting entries waste crawl effort and lower trust in the file.",
+    why: "The sitemap should list only live pages. Broken or redirecting entries waste crawl effort.",
     fix: "Remove the URL from the sitemap, or list its final address.",
     heuristic: null,
     applies: hasSitemapFiles,
     run: (ctx, emit) =>
       ctx.pages.flatMap((p) => {
-        if (!p.inSitemap || p.failure === "blocked-by-robots") return [];
+        if (!p.inSitemap || p.failure === "blocked-by-robots" || isThrottled(p.status)) return [];
         if (p.status !== 200) {
           const got = p.status === null ? "the fetch failed" : `it returned status ${p.status}`;
           return [emit(p.url, `The URL is in the sitemap but ${got}.`)];

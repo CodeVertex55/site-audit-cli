@@ -19,8 +19,14 @@ function requested(ctx: SiteContext): PageRecord[] {
   return ctx.pages.filter((p) => p.failure !== "blocked-by-robots");
 }
 
+/** True when at least one page was requested, not only skipped by robots.txt. */
 function anyCrawled(ctx: SiteContext): boolean {
-  return ctx.pages.length > 0;
+  return requested(ctx).length > 0;
+}
+
+/** Statuses a site sends when it is limiting requests. */
+function isThrottled(status: number | null): boolean {
+  return status === 429 || status === 503;
 }
 
 function hostnameOf(url: string): string | null {
@@ -154,19 +160,32 @@ export const HEALTH_CHECKS: CheckSpec[] = [
     title: "Broken internal link",
     why: "Visitors and search engines who follow the link reach an error page instead of content.",
     fix: "Fix the link to point at a working page, or restore the missing page and redirect it if it moved.",
-    heuristic: null,
+    heuristic:
+      "Statuses 429 and 503 are reported as could not verify (info), because the site was limiting requests.",
     applies: anyCrawled,
     run: (ctx, emit) =>
       requested(ctx)
         .filter((p) => p.inlinks.length > 0 && (p.failure !== null || (p.status ?? 0) >= 400))
-        .map((p) => emit(p.url, describeFailure(p), p.inlinks)),
+        .map((p): Finding => {
+          if (p.failure === null && isThrottled(p.status)) {
+            return {
+              ...emit(
+                p.url,
+                `Could not verify (status ${p.status ?? "unknown"}). The site was limiting requests during the audit.`,
+                p.inlinks,
+              ),
+              severity: "info",
+            };
+          }
+          return emit(p.url, describeFailure(p), p.inlinks);
+        }),
   }),
   health({
     id: "HEALTH-LINK-002",
     severity: "warning",
     scope: "page",
     title: "Internal link points at a redirect",
-    why: "Each redirect adds a round trip for visitors and passes less of the link's value to the final page.",
+    why: "Each redirect adds a round trip for visitors and crawlers.",
     fix: "Update the link to point straight at the final address.",
     heuristic: null,
     applies: anyCrawled,
@@ -225,17 +244,19 @@ export const HEALTH_CHECKS: CheckSpec[] = [
     id: "HEALTH-HTTPS-020",
     severity: "error",
     scope: "site",
-    title: "Site is not served over HTTPS",
+    title: "HTTP is not upgraded to HTTPS",
     why: "Plain HTTP traffic can be read and changed on the way, and browsers label such sites as not secure.",
     fix: "Install a certificate, serve the site over HTTPS, and redirect every HTTP address to its HTTPS version.",
     heuristic: null,
-    applies: () => true,
+    // On an HTTPS origin the check needs the http probe's answer; without one it cannot judge.
+    applies: (ctx) => ctx.origin.startsWith("http://") || ctx.probes.httpRedirectsToHttps !== null,
     run: (ctx, emit) => {
       if (ctx.origin.startsWith("http://")) {
         return [emit(null, "The site is served over plain HTTP.")];
       }
       if (ctx.probes.httpRedirectsToHttps === false) {
-        return [emit(null, "The HTTP version of the site does not redirect to HTTPS.")];
+        const host = hostnameOf(ctx.origin) ?? ctx.origin;
+        return [emit(null, `http://${host}/ answers without redirecting to HTTPS.`)];
       }
       return [];
     },
@@ -294,10 +315,10 @@ export const HEALTH_CHECKS: CheckSpec[] = [
     severity: "warning",
     scope: "site",
     title: "www and apex hosts both answer without a redirect",
-    why: "Two hosts serving the same site split links and ranking signals, and create duplicate pages.",
+    why: "Two hosts serving the same site can split links and ranking signals between them, and create duplicate pages.",
     fix: "Pick one host as the main one and redirect the other to it.",
     heuristic: null,
-    applies: (ctx) => ctx.probes.siblingHost !== null,
+    applies: (ctx) => ctx.probes.siblingHost !== null && ctx.probes.siblingHostRedirects !== null,
     run: (ctx, emit) => {
       if (ctx.probes.siblingHostRedirects !== false) return [];
       const sibling = ctx.probes.siblingHost ?? "the other host";
@@ -326,7 +347,7 @@ export const HEALTH_CHECKS: CheckSpec[] = [
     severity: "info",
     scope: "site",
     title: "No favicon",
-    why: "Browsers request a favicon on every visit. Without one, tabs and bookmarks show a blank icon and the server logs fill with 404s.",
+    why: "Browsers ask for a favicon to show in tabs and bookmarks. Without one they show a generic icon, and the requests end in 404 errors.",
     fix: "Add a favicon link to the page head, or serve a file at /favicon.ico.",
     heuristic: null,
     applies: (ctx) => ctx.probes.favicon !== null,
@@ -344,7 +365,7 @@ export const HEALTH_CHECKS: CheckSpec[] = [
     why: "Links that lead nowhere frustrate visitors and make the site look neglected.",
     fix: "Update or remove the link.",
     heuristic:
-      "Statuses 401, 403, 405, 429 and 503 are reported as could not verify (info), because many sites refuse automated requests.",
+      "Statuses 401, 403, 405, 429 and 503, and any status outside 100 to 599, are reported as could not verify (info), because many sites refuse automated requests.",
     applies: (ctx) => ctx.external !== null,
     run: (ctx, emit) =>
       (ctx.external ?? []).flatMap((e): Finding[] => {
@@ -352,8 +373,10 @@ export const HEALTH_CHECKS: CheckSpec[] = [
           return [emit(e.url, `The request failed (${e.failure}).`, e.usedBy)];
         }
         const status = e.status;
-        if (status === null || status < 400) return [];
-        if (COULD_NOT_VERIFY.has(status)) {
+        if (status === null) return [];
+        const nonStandard = status < 100 || status > 599;
+        if (!nonStandard && status < 400) return [];
+        if (nonStandard || COULD_NOT_VERIFY.has(status)) {
           return [
             {
               ...emit(
