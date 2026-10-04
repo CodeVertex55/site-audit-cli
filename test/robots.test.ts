@@ -119,6 +119,19 @@ describe("crawl delay", () => {
     expect(crawlDelayMs(f, "x")).toEqual({ ms: 30000, clamped: false });
   });
 
+  test.each(["0x10", "1e3", "1.", ".5", "+2", "1,5", "Infinity", ""])(
+    "ignores the non-decimal value %j",
+    (value) => {
+      const f = parseRobots(`User-agent: *\nCrawl-delay: ${value}\n`);
+      expect(crawlDelayMs(f, "x")).toEqual({ ms: null, clamped: false });
+    },
+  );
+
+  test("accepts plain decimals", () => {
+    expect(crawlDelayMs(parseRobots("User-agent: *\nCrawl-delay: 2.25\n"), "x").ms).toBe(2250);
+    expect(crawlDelayMs(parseRobots("User-agent: *\nCrawl-delay: 0\n"), "x").ms).toBe(0);
+  });
+
   test("accepts fractions and ignores invalid values", () => {
     expect(crawlDelayMs(parseRobots("User-agent: *\nCrawl-delay: 0.5\n"), "x").ms).toBe(500);
     expect(crawlDelayMs(parseRobots("User-agent: *\nCrawl-delay: soon\n"), "x").ms).toBeNull();
@@ -126,10 +139,58 @@ describe("crawl delay", () => {
   });
 });
 
+describe("groups that name the same agent are combined", () => {
+  test("rules from every star group apply", () => {
+    const f = parseRobots(
+      "User-agent: *\nDisallow: /one/\n\nUser-agent: other\nDisallow: /x\n\nUser-agent: *\nDisallow: /two/\n",
+    );
+    expect(isAllowed(f, "anybot", "/one/a")).toBe(false);
+    expect(isAllowed(f, "anybot", "/two/a")).toBe(false);
+    expect(isAllowed(f, "anybot", "/three/a")).toBe(true);
+    expect(isAllowed(f, "other", "/two/a")).toBe(true);
+  });
+
+  test("agent names are compared case-insensitively when combining", () => {
+    const f = parseRobots(
+      "User-agent: Site-Audit-CLI\nDisallow: /a/\n\nUser-agent: *\nDisallow: /z/\n\nUser-agent: site-audit-cli\nDisallow: /b/\n",
+    );
+    expect(isAllowed(f, "site-audit-cli", "/a/x")).toBe(false);
+    expect(isAllowed(f, "site-audit-cli", "/b/x")).toBe(false);
+    expect(isAllowed(f, "site-audit-cli", "/z/x")).toBe(true);
+  });
+
+  test("two groups for the specific agent are both applied", () => {
+    const f = parseRobots(
+      "User-agent: site-audit-cli\nDisallow: /a/\n\nUser-agent: *\nDisallow: /z/\n\nUser-agent: site-audit-cli\nDisallow: /b/\nCrawl-delay: 4\n",
+    );
+    expect(isAllowed(f, "site-audit-cli", "/a/x")).toBe(false);
+    expect(isAllowed(f, "site-audit-cli", "/b/x")).toBe(false);
+    expect(crawlDelayMs(f, "site-audit-cli")).toEqual({ ms: 4000, clamped: false });
+  });
+
+  test("Crawl-delay keeps the first valid value across groups", () => {
+    const f = parseRobots(
+      "User-agent: *\nCrawl-delay: bad\n\nUser-agent: x\n\nUser-agent: *\nCrawl-delay: 3\n\nUser-agent: *\nCrawl-delay: 9\n",
+    );
+    expect(crawlDelayMs(f, "anybot")).toEqual({ ms: 3000, clamped: false });
+  });
+
+  test("an Allow in one star group stops disallowsEverything", () => {
+    const f = parseRobots("User-agent: *\nAllow: /ok\n\nUser-agent: *\nDisallow: /\n");
+    expect(disallowsEverything(f)).toBe(false);
+  });
+
+  test("Disallow slash split across star groups with no Allow is disallowsEverything", () => {
+    const f = parseRobots("User-agent: *\nDisallow: /private/\n\nUser-agent: *\nDisallow: /\n");
+    expect(disallowsEverything(f)).toBe(true);
+    expect(isAllowed(f, "anybot", "/anything")).toBe(false);
+  });
+});
+
 describe("tolerant parsing", () => {
   test("handles CRLF, a byte order mark, unknown directives and garbage", () => {
     const text =
-      "﻿User-agent: *\r\nDisallow: /secret\r\nHost: example.com\r\nthis line is garbage\r\n" +
+      "\uFEFFUser-agent: *\r\nDisallow: /secret\r\nHost: example.com\r\nthis line is garbage\r\n" +
       ": no name\r\nNoindex: /x\r\nSitemap: https://example.com/a.xml\r\n";
     const f = parseRobots(text);
     expect(f.groups).toHaveLength(1);

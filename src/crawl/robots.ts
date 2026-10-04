@@ -35,9 +35,8 @@ export function parseRobots(text: string): RobotsFile {
       collectingAgents = false;
     } else if (name === "crawl-delay") {
       if (current === null) continue;
-      const seconds = Number(value);
-      if (value !== "" && Number.isFinite(seconds) && seconds >= 0 && current.crawlDelay === null) {
-        current.crawlDelay = seconds;
+      if (current.crawlDelay === null && /^\d+(?:\.\d+)?$/.test(value)) {
+        current.crawlDelay = Number(value);
       }
       collectingAgents = false;
     } else if (name === "sitemap") {
@@ -48,29 +47,42 @@ export function parseRobots(text: string): RobotsFile {
   return { groups, sitemaps };
 }
 
-function starGroup(file: RobotsFile): RobotsGroup | null {
-  return file.groups.find((group) => group.agents.includes("*")) ?? null;
+/**
+ * Combine every group that names the given agent (case-insensitive). Rules are
+ * concatenated in file order and the first valid Crawl-delay is kept.
+ */
+function combinedGroup(file: RobotsFile, agent: string): RobotsGroup | null {
+  const wanted = agent.toLowerCase();
+  const matching = file.groups.filter((group) =>
+    group.agents.some((name) => name.toLowerCase() === wanted),
+  );
+  const first = matching[0];
+  if (first === undefined) return null;
+  return {
+    agents: first.agents,
+    rules: matching.flatMap((group) => group.rules),
+    crawlDelay: matching.find((group) => group.crawlDelay !== null)?.crawlDelay ?? null,
+  };
 }
 
 /**
  * The group for a user-agent token: the longest agent that is a
- * case-insensitive prefix of the token, else the "*" group, else null.
+ * case-insensitive prefix of the token, else "*", else null. All groups that
+ * name the chosen agent are combined.
  */
 export function selectGroup(file: RobotsFile, token: string): RobotsGroup | null {
   const lowered = token.toLowerCase();
-  let best: RobotsGroup | null = null;
-  let bestLength = 0;
+  let bestAgent: string | null = null;
   for (const group of file.groups) {
     for (const agent of group.agents) {
       if (agent === "*") continue;
       const candidate = agent.toLowerCase();
-      if (candidate.length > bestLength && lowered.startsWith(candidate)) {
-        best = group;
-        bestLength = candidate.length;
+      if (candidate.length > (bestAgent?.length ?? 0) && lowered.startsWith(candidate)) {
+        bestAgent = candidate;
       }
     }
   }
-  return best ?? starGroup(file);
+  return combinedGroup(file, bestAgent ?? "*");
 }
 
 /**
@@ -138,7 +150,7 @@ export function crawlDelayMs(
 
 /** The "*" group disallows "/" and has no Allow rules. */
 export function disallowsEverything(file: RobotsFile): boolean {
-  const group = starGroup(file);
+  const group = combinedGroup(file, "*");
   if (group === null) return false;
   const hasAllow = group.rules.some((rule) => rule.allow && rule.pattern !== "");
   const disallowsRoot = group.rules.some((rule) => !rule.allow && rule.pattern === "/");
