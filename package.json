@@ -1,0 +1,64 @@
+{
+  "name": "site-audit-cli",
+  "version": "1.0.0",
+  "description": "Command-line site audit for SEO, health, performance and static accessibility checks. Polite crawler, findings instead of a score.",
+  "license": "MIT",
+  "author": "Talha Muneer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/talha55/site-audit-cli.git"
+  },
+  "keywords": [
+    "seo",
+    "site-audit",
+    "cli",
+    "crawler",
+    "web-performance",
+    "accessibility"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "bin": {
+    "site-audit": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepare": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "^5.0.3",
+    "eslint": "^10.12.0",
+    "prettier": "^3.9.9",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.3"
+  }
+}

@@ -1,0 +1,20 @@
+export { VERSION } from "./version.js";
+export type {
+  AssetRecord,
+  AuditOptions,
+  AuditResult,
+  CheckDef,
+  FetchFailure,
+  Finding,
+  FixFirstItem,
+  Group,
+  Hop,
+  LighthousePage,
+  LighthouseSection,
+  PageRecord,
+  PageSummary,
+  ParsedDocument,
+  Scope,
+  Severity,
+  SiteContext,
+} from "./types.js";
