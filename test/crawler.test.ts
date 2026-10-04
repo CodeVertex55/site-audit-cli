@@ -769,6 +769,25 @@ describe("same-site redirects of robots.txt and sitemaps", () => {
     expect(ignored.seen.filter((s) => s.includes("other.example"))).toEqual([]);
   });
 
+  test("a robots.txt redirect chain that is same-site and then leaves the site sends nothing further", async () => {
+    const routes: Record<string, FakeRoute> = {
+      "https://site.example/robots.txt": {
+        status: 301,
+        location: "https://www.site.example/robots.txt",
+      },
+      "https://www.site.example/robots.txt": {
+        status: 301,
+        location: "https://other.example/robots.txt",
+      },
+      "https://site.example/": { body: page() },
+    };
+    const run = crawlStandIn(routes, "https://site.example/");
+    await expect(run.ctx).rejects.toThrow(/robots.txt could not be read.*different site/);
+    expect(run.seen.filter((s) => s.includes("other.example"))).toEqual([]);
+    expect(run.seen).toContain("GET https://www.site.example/robots.txt");
+    expect(run.seen).not.toContain("GET https://site.example/");
+  });
+
   test("a sitemap redirect to the www sibling is followed", async () => {
     const run = crawlStandIn(
       {
@@ -835,6 +854,33 @@ describe("same-site redirects of robots.txt and sitemaps", () => {
       },
     ]);
   });
+});
+
+describe("a start redirect that moves the origin", () => {
+  test("a shifted URL that fails without being blocked ends the audit instead of repeating", async () => {
+    const run = crawlStandIn(
+      {
+        "https://site.example/": { status: 302, location: "https://www.site.example/" },
+        "https://www.site.example/": { status: 302, location: "mailto:a@site.example" },
+      },
+      "https://site.example/",
+    );
+    await expect(run.ctx).rejects.toBeInstanceOf(UnreachableError);
+    expect(run.seen.filter((s) => s === "GET https://www.site.example/")).toHaveLength(1);
+    expect(run.seen.filter((s) => s === "GET https://www.site.example/robots.txt")).toHaveLength(1);
+  }, 4000);
+
+  test("a shifted URL that answers with a broken Location fails once", async () => {
+    const run = crawlStandIn(
+      {
+        "https://site.example/": { status: 301, location: "https://www.site.example/x" },
+        "https://www.site.example/x": { status: 301, location: "http://[bad" },
+      },
+      "https://site.example/",
+    );
+    await expect(run.ctx).rejects.toBeInstanceOf(UnreachableError);
+    expect(run.seen.filter((s) => s === "GET https://www.site.example/x")).toHaveLength(1);
+  }, 4000);
 });
 
 describe("a start redirect that changes only the scheme", () => {

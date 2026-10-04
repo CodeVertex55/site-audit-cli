@@ -385,11 +385,14 @@ async function openSite(
   const hops: Hop[] = [];
   let start = await startFetcher.get(requested);
   hops.push(...start.hops);
-  while (start.failure === "other" && blockedAt.get(start.finalUrl) === "shift") {
-    const next = originOf(start.finalUrl);
+  if (start.failure === "other" && blockedAt.get(start.finalUrl) === "shift") {
+    // The move happens once: the entry is cleared, and a later hop to a third origin is refused.
+    const shifted = start.finalUrl;
+    blockedAt.delete(shifted);
+    const next = originOf(shifted);
     robotsByOrigin.set(next, await loadRobots(siteOnly(net, next), next, options));
     currentOrigin = next;
-    start = await startFetcher.get(start.finalUrl);
+    start = await startFetcher.get(shifted);
     hops.push(...start.hops);
   }
   start = { ...start, url: requested, hops };
