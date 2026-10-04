@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { Fetcher, type FetcherOptions } from "../src/crawl/fetcher.js";
 import { HostGate, type Clock } from "../src/crawl/ratelimit.js";
-import { startSite, type SiteDef, type TestSite } from "./server/index.js";
+import { CLOSED_PORT_HOST, startSite, type SiteDef, type TestSite } from "./server/index.js";
 import { page } from "./server/html.js";
 
 let site: TestSite | undefined;
@@ -146,7 +146,7 @@ describe("get: failures", () => {
   });
 
   test("a closed port gives connection", async () => {
-    const closed = await startSite({ "/": { body: "x" } });
+    const closed = await startSite({ "/": { body: "x" } }, { host: CLOSED_PORT_HOST });
     const url = closed.url("/");
     await closed.close();
     const r = await fetcher().get(url);
@@ -586,7 +586,7 @@ describe("probe", () => {
   });
 
   test("a connection failure is reported", async () => {
-    const closed = await startSite({});
+    const closed = await startSite({}, { host: CLOSED_PORT_HOST });
     const url = closed.url("/a.png");
     await closed.close();
     const r = await fetcher().probe(url);
@@ -615,7 +615,7 @@ describe("single", () => {
   });
 
   test("reports a failure", async () => {
-    const closed = await startSite({});
+    const closed = await startSite({}, { host: CLOSED_PORT_HOST });
     const url = closed.url("/");
     await closed.close();
     const r = await fetcher().single(url);

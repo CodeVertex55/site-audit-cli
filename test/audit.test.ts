@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { audit, buildScope, NOT_SEEN } from "../src/audit.js";
 import { UnreachableError } from "../src/errors.js";
 import { DEFAULT_OPTIONS, type LighthouseSection } from "../src/types.js";
-import { startSite, type TestSite } from "./server/index.js";
+import { CLOSED_PORT_HOST, startSite, type TestSite } from "./server/index.js";
 import { cleanSite, messySite } from "./server/sites.js";
 import { makeContext } from "./helpers/context.js";
 
@@ -184,7 +184,7 @@ describe("audit options", () => {
   });
 
   test("an unreachable start URL propagates UnreachableError", async () => {
-    site = await startSite(cleanSite());
+    site = await startSite(cleanSite(), { host: CLOSED_PORT_HOST });
     const dead = site.url("/");
     await site.close();
     site = undefined;

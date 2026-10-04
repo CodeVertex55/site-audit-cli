@@ -56,6 +56,16 @@ test("HEAD requests get headers only, with content-length", async () => {
   expect(site.log[0]?.method).toBe("HEAD");
 });
 
+test("listens on the IPv4-mapped form of 127.0.0.1 unless a host is given", async () => {
+  // DEFAULT_HOST in server/index.ts says why the fixture avoids 127.0.0.1 by default.
+  site = await startSite({ "/": { body: "mapped" } });
+  expect(site.origin).toMatch(/^http:\/\/\[::ffff:7f00:1\]:\d+$/);
+  expect(await (await fetch(site.url("/"))).text()).toBe("mapped");
+  await site.close();
+  site = await startSite({ "/": { body: "plain" } }, { host: "127.0.0.1" });
+  expect(site.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+});
+
 test("non-loopback fetch is blocked in tests", () => {
   expect(() => fetch("https://example.com/")).toThrow(/non-loopback/);
 });

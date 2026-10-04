@@ -1,5 +1,6 @@
 const realFetch = globalThis.fetch;
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
+// [::ffff:7f00:1] is ::ffff:127.0.0.1, the address the fixture server listens on.
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "[::ffff:7f00:1]"]);
 globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const host = new URL(raw).hostname;

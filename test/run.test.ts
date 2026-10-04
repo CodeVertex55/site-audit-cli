@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { CHECKS } from "../src/checks/registry.js";
 import type { AuditResult, Finding } from "../src/types.js";
 import { exitCodeFor, main, renderChecksReference, type Io } from "../src/run.js";
-import { startSite, type TestSite } from "./server/index.js";
+import { CLOSED_PORT_HOST, startSite, type TestSite } from "./server/index.js";
 import { cleanSite, messySite } from "./server/sites.js";
 
 type Harness = {
@@ -109,7 +109,7 @@ describe("main: exit codes on the fixture sites", () => {
   });
 
   test("a closed port returns 3 with a message on stderr and nothing on stdout", async () => {
-    const s = await startSite(cleanSite());
+    const s = await startSite(cleanSite(), { host: CLOSED_PORT_HOST });
     const url = s.url("/");
     await s.close();
     const h = harness();
@@ -226,7 +226,7 @@ describe("main: output", () => {
     const s = await clean();
     const loud = harness();
     await main([s.url("/"), "--delay", "0", "--fail-on", "never", "--max-pages", "2"], loud.io);
-    expect(loud.err()).toMatch(/\[1\/2\] http:\/\/127\.0\.0\.1:\d+\//);
+    expect(loud.err()).toContain(`[1/2] ${s.url("/")}`);
     expect(loud.out()).not.toContain("[1/2]");
 
     const quiet = harness();

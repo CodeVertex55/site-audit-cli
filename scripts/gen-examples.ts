@@ -13,6 +13,7 @@ import { messySite } from "../test/server/sites.js";
 export type ExampleName = "report.txt" | "report.md" | "report.json" | "report.html";
 
 /** The fixture site always listens here, so the example files name the same address. */
+const FIXTURE_HOST = "127.0.0.1";
 const FIXTURE_PORT = 4173;
 const STARTED_AT = "2026-10-04T09:00:00.000Z";
 const FINISHED_AT = "2026-10-04T09:00:12.000Z";
@@ -55,7 +56,7 @@ function normalise(result: AuditResult): AuditResult {
 
 /** Audits the bundled messy fixture site and renders the four example reports. */
 export async function generateExamples(): Promise<Record<ExampleName, string>> {
-  const site = await startSite(messySite(), { port: FIXTURE_PORT });
+  const site = await startSite(messySite(), { host: FIXTURE_HOST, port: FIXTURE_PORT });
   try {
     const result = normalise(
       await audit({ ...DEFAULT_OPTIONS, startUrl: `${site.origin}/`, delayMs: 0 }),

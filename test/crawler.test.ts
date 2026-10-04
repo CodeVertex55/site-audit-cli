@@ -9,7 +9,7 @@ import {
   type PageRecord,
   type SiteContext,
 } from "../src/types.js";
-import { startSite, type SiteDef, type TestSite } from "./server/index.js";
+import { CLOSED_PORT_HOST, startSite, type SiteDef, type TestSite } from "./server/index.js";
 import { page } from "./server/html.js";
 
 const sites: TestSite[] = [];
@@ -275,7 +275,7 @@ describe("robots.txt", () => {
 
 describe("start URL", () => {
   test("a closed port is unreachable", async () => {
-    const closed = await startSite({});
+    const closed = await startSite({}, { host: CLOSED_PORT_HOST });
     const startUrl = closed.url("/");
     await closed.close();
     await expect(
@@ -1439,7 +1439,7 @@ describe("external hosts", () => {
       "/gone": { status: 404, body: "no" },
       "/nohead": (req) => ({ status: req.method === "HEAD" ? 405 : 200, body: "fine" }),
     });
-    const closed = await startSite({});
+    const closed = await startSite({}, { host: CLOSED_PORT_HOST });
     const closedUrl = closed.url("/down");
     await closed.close();
     const site = await start({
