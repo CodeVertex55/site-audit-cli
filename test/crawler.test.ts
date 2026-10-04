@@ -1574,6 +1574,73 @@ describe("external hosts", () => {
       expect(web.seen).toContain("HEAD http://site.example/private/x");
       expect(ctx.limits.blockedByRobots).toEqual([]);
     });
+
+    test("a trailing-dot form of the audited hostname follows the same robots.txt rules", async () => {
+      const web = fakeWeb({
+        "https://site.example/robots.txt": { body: robots },
+        "https://site.example/": {
+          body: page({
+            body: [
+              '<img src="https://site.example./private/a.png" alt="a">',
+              '<a href="http://site.example./private/x">x</a>',
+            ].join(""),
+          }),
+        },
+      });
+      const ctx = await crawlSite(
+        {
+          ...DEFAULT_OPTIONS,
+          startUrl: "https://site.example/",
+          delayMs: 0,
+          timeoutMs: 2000,
+          checkExternal: true,
+        },
+        { clock: instantClock(), fetchImpl: web.fetchImpl },
+      );
+      expect(web.seen.filter((s) => s.includes("/private/"))).toEqual([]);
+      expect(ctx.assets[0]).toMatchObject({ measured: false });
+      expect(ctx.external?.[0]).toMatchObject({ failure: "blocked-by-robots", status: null });
+    });
+
+    test("--exclude applies to the audited hostname under another scheme", async () => {
+      const web = fakeWeb(routes);
+      const ctx = await crawlSite(
+        {
+          ...DEFAULT_OPTIONS,
+          startUrl: "https://site.example/",
+          delayMs: 0,
+          timeoutMs: 2000,
+          checkExternal: true,
+          ignoreRobots: true,
+          exclude: ["/private/**", "/moved.png"],
+        },
+        { clock: instantClock(), fetchImpl: web.fetchImpl },
+      );
+      expect(web.seen.filter((s) => s.includes("/private/") || s.includes("moved"))).toEqual([]);
+      const byUrl = new Map(ctx.assets.map((asset) => [asset.url, asset]));
+      expect(byUrl.get("http://site.example/private/a.png")?.measured).toBe(false);
+      expect(ctx.external?.[0]).toMatchObject({ status: null });
+    });
+
+    test("a redirect into an excluded path on the audited hostname is not followed", async () => {
+      const web = fakeWeb(routes);
+      const ctx = await crawlSite(
+        {
+          ...DEFAULT_OPTIONS,
+          startUrl: "https://site.example/",
+          delayMs: 0,
+          timeoutMs: 2000,
+          checkExternal: true,
+          ignoreRobots: true,
+          exclude: ["/private/**"],
+        },
+        { clock: instantClock(), fetchImpl: web.fetchImpl },
+      );
+      expect(web.seen).toContain("HEAD http://site.example/moved.png");
+      expect(web.seen.filter((s) => s.includes("/private/"))).toEqual([]);
+      const byUrl = new Map(ctx.assets.map((asset) => [asset.url, asset]));
+      expect(byUrl.get("http://site.example/moved.png")?.measured).toBe(false);
+    });
   });
 
   test("other hosts are held to one request at a time", async () => {
@@ -1762,7 +1829,15 @@ describe("origin probes", () => {
         { fetchImpl: web.fetchImpl },
       );
       expect(ctx.probes.httpRedirectsToHttps).toBeNull();
-      expect(ctx.sitemap.files).toEqual([]);
+      expect(ctx.sitemap.files).toEqual([
+        {
+          url: "https://site.example/sitemap.xml",
+          status: null,
+          ok: false,
+          note: "disallowed by robots.txt, not requested",
+        },
+      ]);
+      expect(ctx.limits.blockedByRobots).toContain("https://site.example/sitemap.xml");
       expect(web.seen).not.toContain("GET http://site.example/");
       expect(web.seen).not.toContain("GET https://site.example/sitemap.xml");
     });
@@ -1892,6 +1967,21 @@ describe("throttling and progress", () => {
     expect(await notesFor(0)).toContain(note);
     expect(await notesFor(2000)).not.toContain(note);
     expect(await notesFor(3000)).toEqual([]);
+  });
+
+  test("a clamped Crawl-delay below --delay prints no note", async () => {
+    const site = await start({
+      "/robots.txt": { headers: ROBOTS_TEXT, body: "User-agent: *\nCrawl-delay: 120\n" },
+      "/": { body: page({ head: '<link rel="icon" href="data:,">' }) },
+    });
+    const notes: string[] = [];
+    await crawlSite(opts(site, { delayMs: 40000 }), {
+      clock: instantClock(),
+      onProgress: (e) => {
+        if (e.kind === "note" && e.message !== undefined) notes.push(e.message);
+      },
+    });
+    expect(notes).toEqual([]);
   });
 
   test("a robots.txt crawl-delay above the cap is clamped and noted", async () => {

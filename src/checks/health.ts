@@ -164,7 +164,7 @@ export const HEALTH_CHECKS: CheckSpec[] = [
     why: "Visitors and search engines who follow the link reach an error page instead of content.",
     fix: "Fix the link to point at a working page, or restore the missing page and redirect it if it moved.",
     heuristic:
-      "Statuses 429 and 503 are reported as could not verify (info), because the site was limiting requests.",
+      "A link whose target answered 429 or 503 during the audit is reported as not verified, because the answer says nothing about whether the page exists.",
     applies: anyCrawled,
     run: (ctx, emit) =>
       requested(ctx)

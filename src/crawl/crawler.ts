@@ -49,6 +49,8 @@ const MAX_ROBOTS_BYTES = 512 * 1024;
 /** Origin moves a start redirect may make while it stays on the requested site. */
 const MAX_SAME_SITE_SHIFTS = 3;
 const BLOCKED_CODE = "SITE_AUDIT_BLOCKED";
+/** The note on a guessed /sitemap.xml that robots.txt disallows. SEO-MAP-090 reads it. */
+const ROBOTS_SKIPPED_NOTE = "disallowed by robots.txt, not requested";
 
 type BlockReason = "origin" | "shift" | "excluded" | "robots";
 
@@ -133,10 +135,15 @@ type Net = {
 /** The hostname part of a `host` or `host:port` value. */
 function hostnameOfHost(host: string): string {
   try {
-    return new URL(`http://${host}`).hostname;
+    return bareHostname(new URL(`http://${host}`).hostname);
   } catch {
-    return host;
+    return bareHostname(host);
   }
+}
+
+/** A hostname without its one trailing dot: `example.com.` names the same host as `example.com`. */
+function bareHostname(hostname: string): string {
+  return hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
 }
 
 /**
@@ -195,8 +202,9 @@ function sameSite(url: string, origin: string): boolean {
   try {
     const target = new URL(url);
     const base = new URL(origin);
-    const host =
-      target.hostname === base.hostname || target.hostname === siblingHost(base.hostname);
+    const targetName = bareHostname(target.hostname);
+    const baseName = bareHostname(base.hostname);
+    const host = targetName === baseName || targetName === siblingHost(baseName);
     return host && (target.port === "" || target.port === base.port);
   } catch {
     return false;
@@ -377,13 +385,13 @@ function applyCrawlDelay(
 ): void {
   if (options.ignoreRobots || robots.delayMs === null) return;
   gate.setMinDelay(new URL(origin).host, robots.delayMs);
-  if (robots.delayMs > options.delayMs) {
-    say({
-      kind: "note",
-      done: 0,
-      message: `robots.txt asks for ${secondsText(robots.requestedMs ?? robots.delayMs)} between requests, so this run will take longer.`,
-    });
-  }
+  // The notes are only printed when the robots.txt delay sets the pace.
+  if (robots.delayMs <= options.delayMs) return;
+  say({
+    kind: "note",
+    done: 0,
+    message: `robots.txt asks for ${secondsText(robots.requestedMs ?? robots.delayMs)} between requests, so this run will take longer.`,
+  });
   if (robots.clamped) {
     say({
       kind: "note",
@@ -517,18 +525,21 @@ type SitemapFile = SiteContext["sitemap"]["files"][number];
  * Reads sitemaps from robots.txt, else `/sitemap.xml`. An index is followed one level. A guessed
  * `/sitemap.xml` that answers with an HTML page and does not parse as a sitemap is not recorded,
  * since many sites answer every path with a page. A guessed `/sitemap.xml` that robots.txt
- * disallows is not requested; a sitemap that robots.txt names is read whatever its path.
+ * disallows is not requested; it is recorded with a note and counted as skipped by robots.txt.
+ * A sitemap that robots.txt names is read whatever its path.
  */
 async function loadSitemaps(
   fetcher: Fetcher,
   origin: string,
   named: string[],
   robotsBlocks: (url: string) => boolean,
+  block: (url: string) => void,
   say: Say,
 ): Promise<SiteContext["sitemap"]> {
   const guessed = named.length === 0;
   const guess = `${origin}/sitemap.xml`;
-  const candidates = guessed ? (robotsBlocks(guess) ? [] : [guess]) : named;
+  const guessBlocked = guessed && robotsBlocks(guess);
+  const candidates = guessed ? (guessBlocked ? [] : [guess]) : named;
   const pending = [...new Set(candidates)].map((url) => ({ url, level: 0 }));
   const files: SitemapFile[] = [];
   const urls: string[] = [];
@@ -537,6 +548,10 @@ async function loadSitemaps(
   const record = (url: string, status: number | null, ok: boolean, note: string | null): void => {
     files.push({ url, status, ok, note });
   };
+  if (guessBlocked) {
+    record(guess, null, false, ROBOTS_SKIPPED_NOTE);
+    block(guess);
+  }
 
   while (pending.length > 0 && files.length < MAX_SITEMAP_FILES) {
     const item = pending.shift();
@@ -859,8 +874,11 @@ type AssetArgs = {
   fetchers: Fetchers;
   assets: AssetRecord[];
   robotsBlocks: (url: string) => boolean;
-  /** True for a URL on the audited hostname, whatever its scheme or port. */
-  onAuditHost: (url: string) => boolean;
+  /**
+   * For a URL on the audited hostname under another scheme or port: "robots" or "excluded"
+   * when it must not be requested, else null.
+   */
+  auditHostReason: (url: string) => "robots" | "excluded" | null;
   block: (url: string) => void;
   say: Say;
 };
@@ -875,9 +893,11 @@ async function probeAssets(a: AssetArgs): Promise<void> {
   for (const asset of a.assets) {
     if (asset.thirdParty) {
       if (!options.checkExternal) continue;
-      // The audited host under another scheme or port follows the audited site's robots.txt.
-      if (a.onAuditHost(asset.url) && a.robotsBlocks(asset.url)) a.block(asset.url);
-      else eligible.push(asset);
+      // The audited host under another scheme or port follows the audited site's robots.txt
+      // and --exclude.
+      const reason = a.auditHostReason(asset.url);
+      if (reason === "robots") a.block(asset.url);
+      else if (reason === null) eligible.push(asset);
     } else if (a.robotsBlocks(asset.url)) {
       a.block(asset.url);
     } else if (!isExcluded(asset.url, options.exclude)) {
@@ -1003,14 +1023,15 @@ async function probeLink(
 
 /**
  * Checks each unique external link once. A link that `skip` refuses (the audited hostname under
- * another scheme or port, disallowed by the audited site's robots.txt) is not requested and is
- * recorded with the failure `blocked-by-robots`.
+ * another scheme or port that the audited site's robots.txt disallows or --exclude matches) is
+ * not requested. A robots.txt case is recorded with the failure `blocked-by-robots`; an excluded
+ * one keeps no status and no failure.
  */
 async function probeExternal(
   options: AuditOptions,
   pages: PageRecord[],
   fetcher: Fetcher,
-  skip: (url: string) => boolean,
+  skip: (url: string) => "robots" | "excluded" | null,
   say: Say,
 ): Promise<ExternalLink[]> {
   const byUrl = new Map<string, ExternalLink>();
@@ -1031,8 +1052,9 @@ async function probeExternal(
   const entries = [...byUrl.values()];
   let done = 0;
   await mapPool(entries, options.concurrency, async (entry) => {
-    if (skip(entry.url)) {
-      entry.failure = "blocked-by-robots";
+    const reason = skip(entry.url);
+    if (reason !== null) {
+      if (reason === "robots") entry.failure = "blocked-by-robots";
       return;
     }
     const result = await probeLink(fetcher, entry.url);
@@ -1100,16 +1122,21 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
   // Other hosts, and the audited hostname under another scheme or port. The latter shares the
   // audit gate and is held to the audited site's robots.txt before the first request and before
   // any redirect is followed.
-  const auditHostname = new URL(origin).hostname;
+  const auditHostname = bareHostname(new URL(origin).hostname);
   const onAuditHost = (url: string): boolean => {
     try {
-      return new URL(url).hostname === auditHostname;
+      return bareHostname(new URL(url).hostname) === auditHostname;
     } catch {
       return false;
     }
   };
-  const otherReason = (url: string): BlockReason | null =>
-    onAuditHost(url) && robotsBlocks(url) ? "robots" : null;
+  // Why a URL on the audited hostname under another scheme or port is not requested, if it is not.
+  const auditHostReason = (url: string): "robots" | "excluded" | null => {
+    if (!onAuditHost(url)) return null;
+    if (robotsBlocks(url)) return "robots";
+    return isExcluded(url, options.exclude) ? "excluded" : null;
+  };
+  const otherReason = (url: string): BlockReason | null => auditHostReason(url);
   const fetchers: Fetchers = {
     main: build(new RoutedGate(gate, otherGate, new URL(origin).host), baseFetch),
     crawl: build(gate, guardedFetch(baseFetch, reasonFor, blockedAt)),
@@ -1119,11 +1146,13 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     ),
   };
 
+  const skippedSitemaps: string[] = [];
   const sitemap = await loadSitemaps(
     siteOnly(net, origin),
     origin,
     robots.summary.sitemaps,
     robotsBlocks,
+    (url) => skippedSitemaps.push(url),
     say,
   );
   const crawl = await crawlPages({
@@ -1144,6 +1173,7 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
   const block = (url: string): void => {
     if (!blockedByRobots.includes(url)) blockedByRobots.push(url);
   };
+  for (const url of skippedSitemaps) block(url);
   const assets = collectAssets(crawl.pages, origin);
   await probeAssets({
     options,
@@ -1151,7 +1181,7 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     fetchers,
     assets,
     robotsBlocks,
-    onAuditHost,
+    auditHostReason,
     block,
     say,
   });
@@ -1162,9 +1192,9 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
         crawl.pages,
         fetchers.other,
         (url) => {
-          if (!onAuditHost(url) || !robotsBlocks(url)) return false;
-          block(url);
-          return true;
+          const reason = auditHostReason(url);
+          if (reason === "robots") block(url);
+          return reason;
         },
         say,
       )

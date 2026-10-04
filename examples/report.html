@@ -532,7 +532,7 @@ details.passed-list li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; p
 <dl class="facts">
 <dt>Why</dt><dd>Visitors and search engines who follow the link reach an error page instead of content.</dd>
 <dt>Fix</dt><dd>Fix the link to point at a working page, or restore the missing page and redirect it if it moved.</dd>
-<dt>Heuristic</dt><dd>Statuses 429 and 503 are reported as could not verify (info), because the site was limiting requests.</dd>
+<dt>Heuristic</dt><dd>A link whose target answered 429 or 503 during the audit is reported as not verified, because the answer says nothing about whether the page exists.</dd>
 </dl>
 <div class="table-wrap" role="region" aria-label="Findings for Broken internal link" tabindex="0"><table>
 <thead><tr><th scope="col">Page</th><th scope="col">Detail</th><th scope="col">Evidence</th></tr></thead>

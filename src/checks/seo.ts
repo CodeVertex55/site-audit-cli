@@ -15,6 +15,9 @@ const MAX_OTHERS = 5;
 /** The crawler's note for a sitemap index nested below the first level. Not a parse failure. */
 const NESTED_INDEX_NOTE = "nested sitemap index not followed";
 
+/** The crawler's note for a guessed /sitemap.xml that robots.txt disallows. Not a sitemap file. */
+const ROBOTS_SKIPPED_NOTE = "disallowed by robots.txt, not requested";
+
 function seo(spec: Parameters<typeof defineCheck>[1]): CheckSpec {
   return defineCheck("seo", spec);
 }
@@ -82,7 +85,7 @@ function isStartPage(ctx: SiteContext, page: PageRecord): boolean {
 
 /** True when the crawler tried at least one sitemap file. */
 function hasSitemapFiles(ctx: SiteContext): boolean {
-  return ctx.sitemap.files.length > 0;
+  return ctx.sitemap.files.some((f) => f.note !== ROBOTS_SKIPPED_NOTE);
 }
 
 /** Statuses a site sends when it is limiting requests; such a target was not judged. */
@@ -93,7 +96,9 @@ function isThrottled(status: number | null): boolean {
 /** Why SEO-MAP-090 fired, from what robots.txt named and what the crawler recorded. */
 function missingSitemapDetail(ctx: SiteContext): string {
   if (ctx.robots.sitemaps.length === 0) {
-    return "No sitemap was named in robots.txt and none was found at /sitemap.xml.";
+    return ctx.sitemap.files.some((f) => f.note === ROBOTS_SKIPPED_NOTE)
+      ? "No sitemap is named in robots.txt, and /sitemap.xml was not requested because robots.txt disallows it."
+      : "No sitemap was named in robots.txt and none was found at /sitemap.xml.";
   }
   const named = new Set(ctx.robots.sitemaps);
   const unread = ctx.sitemap.files.find((f) => named.has(f.url) && !f.ok);

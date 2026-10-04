@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { runChecks } from "../src/checks/registry.js";
+import { getCheck, runChecks } from "../src/checks/registry.js";
 import type { PageRecord, SiteContext } from "../src/types.js";
 import { makeContext, makePage } from "./helpers/context.js";
 
@@ -72,6 +72,13 @@ describe("link and redirect checks", () => {
     const healthy = at("/ok", { inlinks: [`${SITE}/`] });
     const ctx = makeContext({ pages: [makePage(), orphan404, blocked, healthy] });
     expect(only("HEALTH-LINK-001", ctx).status).toBe("pass");
+  });
+
+  test("HEALTH-LINK-001 explains the 429 and 503 rule in words true for both", () => {
+    expect(only("HEALTH-LINK-001", makeContext()).severity).toBe("error");
+    expect(getCheck("HEALTH-LINK-001")?.heuristic).toBe(
+      "A link whose target answered 429 or 503 during the audit is reported as not verified, because the answer says nothing about whether the page exists.",
+    );
   });
 
   test("HEALTH-LINK-001 reports 429 and 503 as could not verify, at info severity", () => {

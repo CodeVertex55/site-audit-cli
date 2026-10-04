@@ -449,6 +449,32 @@ describe("sitemap checks", () => {
     expect(ids(withSitemap({ found: true }))).not.toContain("SEO-MAP-090");
   });
 
+  test("SEO-MAP-090 says when the guessed sitemap.xml was not requested because of robots.txt", () => {
+    const base = makeContext();
+    const ctx: SiteContext = {
+      ...base,
+      robots: { ...base.robots, sitemaps: [] },
+      sitemap: {
+        found: false,
+        urls: [],
+        files: [
+          {
+            url: `${SITE}/sitemap.xml`,
+            status: null,
+            ok: false,
+            note: "disallowed by robots.txt, not requested",
+          },
+        ],
+      },
+    };
+    expect(only("SEO-MAP-090", ctx).findings[0]?.detail).toBe(
+      "No sitemap is named in robots.txt, and /sitemap.xml was not requested because robots.txt disallows it.",
+    );
+    for (const id of ["SEO-MAP-091", "SEO-MAP-092", "SEO-MAP-093"]) {
+      expect(only(id, ctx).status, id).toBe("not-applicable");
+    }
+  });
+
   test("SEO-MAP-090 says when no sitemap was named and none was found", () => {
     const base = makeContext();
     const ctx: SiteContext = {

@@ -41,7 +41,7 @@ Every check, grouped by area. The severity shown is the default for the check, a
 
 | Id | Severity | Check | Why it matters | How to fix | Rule of thumb |
 | --- | --- | --- | --- | --- | --- |
-| `HEALTH-LINK-001` | error | Broken internal link | Visitors and search engines who follow the link reach an error page instead of content. | Fix the link to point at a working page, or restore the missing page and redirect it if it moved. | Statuses 429 and 503 are reported as could not verify (info), because the site was limiting requests. |
+| `HEALTH-LINK-001` | error | Broken internal link | Visitors and search engines who follow the link reach an error page instead of content. | Fix the link to point at a working page, or restore the missing page and redirect it if it moved. | A link whose target answered 429 or 503 during the audit is reported as not verified, because the answer says nothing about whether the page exists. |
 | `HEALTH-LINK-002` | warning | Internal link points at a redirect | Each redirect adds a round trip for visitors and crawlers. | Update the link to point straight at the final address. | None |
 | `HEALTH-REDIR-010` | warning | Redirect chain has more than one hop | Every extra hop slows the page down and gives crawlers another chance to give up. | Redirect the first address straight to the final address. | None |
 | `HEALTH-REDIR-011` | error | Redirect loop or too many redirects | Browsers and crawlers give up on a loop, so the page cannot be reached at all. | Remove the redirect that points back at an earlier address in the chain. | Fails on a loop, or on a chain of more than 10 hops, which the crawler stops following. |

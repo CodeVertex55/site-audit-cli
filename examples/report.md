@@ -241,7 +241,7 @@ Findings (8):
 - **Severity:** error
 - **Why:** Visitors and search engines who follow the link reach an error page instead of content.
 - **Fix:** Fix the link to point at a working page, or restore the missing page and redirect it if it moved.
-- **Heuristic:** Statuses 429 and 503 are reported as could not verify (info), because the site was limiting requests.
+- **Heuristic:** A link whose target answered 429 or 503 during the audit is reported as not verified, because the answer says nothing about whether the page exists.
 
 Findings (1):
 
