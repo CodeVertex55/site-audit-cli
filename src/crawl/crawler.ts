@@ -516,16 +516,19 @@ type SitemapFile = SiteContext["sitemap"]["files"][number];
 /**
  * Reads sitemaps from robots.txt, else `/sitemap.xml`. An index is followed one level. A guessed
  * `/sitemap.xml` that answers with an HTML page and does not parse as a sitemap is not recorded,
- * since many sites answer every path with a page.
+ * since many sites answer every path with a page. A guessed `/sitemap.xml` that robots.txt
+ * disallows is not requested; a sitemap that robots.txt names is read whatever its path.
  */
 async function loadSitemaps(
   fetcher: Fetcher,
   origin: string,
   named: string[],
+  robotsBlocks: (url: string) => boolean,
   say: Say,
 ): Promise<SiteContext["sitemap"]> {
   const guessed = named.length === 0;
-  const candidates = guessed ? [`${origin}/sitemap.xml`] : named;
+  const guess = `${origin}/sitemap.xml`;
+  const candidates = guessed ? (robotsBlocks(guess) ? [] : [guess]) : named;
   const pending = [...new Set(candidates)].map((url) => ({ url, level: 0 }));
   const files: SitemapFile[] = [];
   const urls: string[] = [];
@@ -902,11 +905,17 @@ const MAX_VARIANT_REQUESTS = 3;
  * otherwise: a failure, a 4xx or 5xx answer, a redirect off the site or a longer chain. An
  * origin on a port other than 443 is not probed, since its plain-HTTP port is unknown.
  */
-async function probeHttpVariant(fetcher: Fetcher, origin: string): Promise<boolean | null> {
+async function probeHttpVariant(
+  fetcher: Fetcher,
+  origin: string,
+  blocks: (url: string) => boolean,
+): Promise<boolean | null> {
   const parsed = new URL(origin);
   if (parsed.protocol !== "https:" || parsed.port !== "") return null;
   let url = `http://${parsed.hostname}/`;
   for (let i = 0; i < MAX_VARIANT_REQUESTS; i += 1) {
+    // A URL on the audited hostname that its robots.txt disallows is not requested.
+    if (blocks(url)) return null;
     const r = await fetcher.single(url);
     if (r.status === null) return null;
     if (r.status >= 200 && r.status < 300) return false;
@@ -962,9 +971,14 @@ async function probeOrigin(
   fetchers: Fetchers,
   pages: PageRecord[],
   robotsBlocks: (url: string) => boolean,
+  onAuditHost: (url: string) => boolean,
 ): Promise<SiteContext["probes"]> {
   const sibling = siblingHost(new URL(origin).hostname);
-  const httpRedirectsToHttps = await probeHttpVariant(fetchers.main, origin);
+  const httpRedirectsToHttps = await probeHttpVariant(
+    fetchers.main,
+    origin,
+    (url) => onAuditHost(url) && robotsBlocks(url),
+  );
   const siblingHostRedirects =
     sibling === null ? null : await probeSibling(fetchers.other, origin, sibling);
   const soft404 = await probeSoft404(fetchers.crawl, origin);
@@ -1105,7 +1119,13 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     ),
   };
 
-  const sitemap = await loadSitemaps(siteOnly(net, origin), origin, robots.summary.sitemaps, say);
+  const sitemap = await loadSitemaps(
+    siteOnly(net, origin),
+    origin,
+    robots.summary.sitemaps,
+    robotsBlocks,
+    say,
+  );
   const crawl = await crawlPages({
     options,
     origin,
@@ -1135,7 +1155,7 @@ export async function crawlSite(options: AuditOptions, deps: CrawlDeps = {}): Pr
     block,
     say,
   });
-  const probes = await probeOrigin(origin, fetchers, crawl.pages, robotsBlocks);
+  const probes = await probeOrigin(origin, fetchers, crawl.pages, robotsBlocks, onAuditHost);
   const external = options.checkExternal
     ? await probeExternal(
         options,

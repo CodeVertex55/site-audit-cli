@@ -1745,6 +1745,28 @@ describe("origin probes", () => {
       expect(web.seen.filter((s) => s === "GET http://site.example/")).toHaveLength(1);
     });
 
+    test("the http variant and a guessed sitemap.xml are not requested where robots.txt disallows them", async () => {
+      const web = fakeWeb({
+        "https://site.example/robots.txt": {
+          body: "User-agent: *\nDisallow: /$\nDisallow: /sitemap.xml\n",
+        },
+        "https://site.example/home": { body: home },
+      });
+      const ctx = await crawlSite(
+        {
+          ...DEFAULT_OPTIONS,
+          startUrl: "https://site.example/home",
+          delayMs: 0,
+          timeoutMs: 2000,
+        },
+        { fetchImpl: web.fetchImpl },
+      );
+      expect(ctx.probes.httpRedirectsToHttps).toBeNull();
+      expect(ctx.sitemap.files).toEqual([]);
+      expect(web.seen).not.toContain("GET http://site.example/");
+      expect(web.seen).not.toContain("GET https://site.example/sitemap.xml");
+    });
+
     test("the http variant redirecting to https on a different site gives null", async () => {
       const run = crawlFake({
         "http://site.example/": { status: 301, location: "https://elsewhere.example/" },
