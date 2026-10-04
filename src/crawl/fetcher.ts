@@ -89,6 +89,7 @@ function collectErrorFacts(error: unknown, facts: ErrorFacts, depth: number): vo
 }
 
 function failureForCode(code: string): FetchFailure | null {
+  if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") return "timeout";
   if (code === "ENOTFOUND" || code === "EAI_AGAIN") return "dns";
   if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EHOSTUNREACH") {
     return "connection";
@@ -349,8 +350,7 @@ export class Fetcher {
       if (!outcome.ok || !isRetryStatus(outcome.raw.status)) return outcome;
       if (retriesLeft === 0) {
         const host = new URL(url).host;
-        this.gate.doubleDelay(host);
-        this.onThrottle?.(host);
+        if (this.gate.doubleDelay(host)) this.onThrottle?.(host);
         return outcome;
       }
       await this.clock.sleep(

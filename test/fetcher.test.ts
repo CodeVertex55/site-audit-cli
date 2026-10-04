@@ -135,6 +135,8 @@ describe("get: failures", () => {
     ["ERR_TLS_CERT_ALTNAME_INVALID", "tls"],
     ["DEPTH_ZERO_SELF_SIGNED_CERT", "tls"],
     ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "tls"],
+    ["ETIMEDOUT", "timeout"],
+    ["UND_ERR_CONNECT_TIMEOUT", "timeout"],
     ["EPIPE", "other"],
   ];
   test.each(cases)("error code %s maps to %s", async (code, expected) => {
@@ -346,6 +348,27 @@ describe("get: throttling", () => {
     expect(clock.slept).toEqual([5000, 5000]);
     const host = new URL(site.origin).host;
     expect(throttled[0]).toBe(host);
+    expect(gate.delayFor(host)).toBe(200);
+  });
+
+  test("two exhausted URLs on one host double the delay once and report throttling once", async () => {
+    site = await startSite({
+      "/one": { status: 429 },
+      "/two": { status: 503 },
+    });
+    const gate = new HostGate({ delayMs: 100, concurrency: 2 });
+    const throttled: string[] = [];
+    const f = fetcher({
+      clock: sleepLog(),
+      gate,
+      onThrottle: (host) => throttled.push(host),
+    });
+    expect((await f.get(site.url("/one"))).status).toBe(429);
+    expect((await f.get(site.url("/two"))).status).toBe(503);
+    const host = new URL(site.origin).host;
+    expect(site.hits("/one")).toBe(3);
+    expect(site.hits("/two")).toBe(3);
+    expect(throttled).toEqual([host]);
     expect(gate.delayFor(host)).toBe(200);
   });
 

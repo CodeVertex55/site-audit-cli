@@ -14,6 +14,7 @@ type HostState = {
   inFlight: number;
   lastStart: number | null;
   delayMs: number;
+  doubled: boolean;
   slotWaiters: (() => void)[];
 };
 
@@ -42,6 +43,7 @@ export class HostGate {
         inFlight: 0,
         lastStart: null,
         delayMs: this.baseDelayMs,
+        doubled: false,
         slotWaiters: [],
       };
       this.hosts.set(host, state);
@@ -91,10 +93,16 @@ export class HostGate {
     state.delayMs = Math.max(state.delayMs, ms);
   }
 
-  /** Doubles the host's delay. Used after repeated 429 or 503 responses. */
-  doubleDelay(host: string): void {
+  /**
+   * Doubles the host's delay, at most once per host. Returns true on the first
+   * call for a host and false afterwards. A delay of 0 becomes 1000 ms.
+   */
+  doubleDelay(host: string): boolean {
     const state = this.stateFor(host);
-    state.delayMs = state.delayMs * 2;
+    if (state.doubled) return false;
+    state.doubled = true;
+    state.delayMs = state.delayMs === 0 ? 1000 : state.delayMs * 2;
+    return true;
   }
 
   delayFor(host: string): number {

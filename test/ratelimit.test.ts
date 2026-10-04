@@ -104,13 +104,30 @@ describe("HostGate", () => {
     expect(gate.delayFor("other")).toBe(1000);
   });
 
-  test("doubleDelay doubles the delay for that host only", () => {
+  test("doubleDelay doubles the delay once and reports whether it did", () => {
     const gate = new HostGate({ delayMs: 1000, concurrency: 1, clock: fakeClock() });
-    gate.doubleDelay("h");
+    expect(gate.doubleDelay("h")).toBe(true);
     expect(gate.delayFor("h")).toBe(2000);
-    gate.doubleDelay("h");
-    expect(gate.delayFor("h")).toBe(4000);
-    expect(gate.delayFor("other")).toBe(1000);
+    expect(gate.doubleDelay("h")).toBe(false);
+    expect(gate.doubleDelay("h")).toBe(false);
+    expect(gate.delayFor("h")).toBe(2000);
+  });
+
+  test("doubleDelay is independent per host", () => {
+    const gate = new HostGate({ delayMs: 1000, concurrency: 1, clock: fakeClock() });
+    expect(gate.doubleDelay("a")).toBe(true);
+    expect(gate.delayFor("b")).toBe(1000);
+    expect(gate.doubleDelay("b")).toBe(true);
+    expect(gate.delayFor("a")).toBe(2000);
+    expect(gate.delayFor("b")).toBe(2000);
+  });
+
+  test("doubleDelay turns a zero delay into 1000 ms", () => {
+    const gate = new HostGate({ delayMs: 0, concurrency: 1, clock: fakeClock() });
+    expect(gate.doubleDelay("h")).toBe(true);
+    expect(gate.delayFor("h")).toBe(1000);
+    expect(gate.doubleDelay("h")).toBe(false);
+    expect(gate.delayFor("h")).toBe(1000);
   });
 
   test("a raised delay applies to the next acquire", async () => {
