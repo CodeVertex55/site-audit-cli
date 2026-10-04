@@ -46,3 +46,10 @@ test("context builders return a clean context and honour overrides", () => {
       .pagesCrawled,
   ).toBe(2);
 });
+
+test("the package exports the error classes audit() and the command line throw", async () => {
+  const index = await import("../src/index.js");
+  const errors = await import("../src/errors.js");
+  expect(index.UnreachableError).toBe(errors.UnreachableError);
+  expect(index.UsageError).toBe(errors.UsageError);
+});

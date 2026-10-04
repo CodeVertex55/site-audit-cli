@@ -41,6 +41,7 @@ export function buildScope(ctx: SiteContext): Scope {
     checkExternal: ctx.options.checkExternal,
     assetsNotMeasured: ctx.limits.assetsNotMeasured,
     delayRaised: ctx.limits.delayRaised,
+    crawlDelayMs: ctx.options.ignoreRobots ? null : ctx.robots.crawlDelay,
     groups: [...(ctx.options.only ?? GROUPS)],
     notSeen: [...NOT_SEEN],
   };

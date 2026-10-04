@@ -18,6 +18,8 @@ export type Io = {
   stdout: (s: string) => void;
   stderr: (s: string) => void;
   writeFile: (path: string, data: string) => Promise<void>;
+  /** True when `path` can be written: its folder exists and is writable and it is not a folder. */
+  canWrite: (path: string) => Promise<boolean>;
   isTTY: boolean;
   env: Record<string, string | undefined>;
 };
@@ -147,12 +149,19 @@ export async function main(argv: string[], io: Io, deps: AuditDeps = {}): Promis
   }
 
   const { options, cli } = command;
+  // Checked before any request, so a path that cannot be written does not waste a crawl.
+  if (cli.output !== null && !(await io.canWrite(cli.output))) {
+    io.stderr(`site-audit: could not write ${clean(cli.output)}\n`);
+    return 2;
+  }
   const progress: AuditDeps["onProgress"] = cli.quiet
     ? deps.onProgress
     : (event) => {
         deps.onProgress?.(event);
         if (event.kind === "page" && event.url !== undefined) {
           io.stderr(`[${event.done}/${options.maxPages}] ${cleanUrl(event.url)}\n`);
+        } else if (event.kind === "note" && event.message !== undefined) {
+          io.stderr(`Note: ${clean(event.message, MESSAGE_MAX)}\n`);
         }
       };
 

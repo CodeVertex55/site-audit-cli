@@ -40,27 +40,30 @@ Options:
                                     Can be repeated.
   --check-external                  Allow requests to other hosts: external link checks and
                                     third-party asset sizes.
-  --ignore-robots                   Do not apply robots.txt. For sites you own. The report
-                                    shows a notice.
+  --ignore-robots                   Do not apply robots.txt. For sites you own or have
+                                    permission to audit. The report shows a notice.
   --user-agent STRING               Request header. robots.txt matching uses the token
-                                    site-audit-cli.
+                                    site-audit-cli. Default: ${DEFAULT_OPTIONS.userAgent}
   --only GROUP[,GROUP]              Limit to groups: seo, health, performance, accessibility.
+                                    Default: all groups.
   --lighthouse                      Add Lighthouse lab results for the start URL.
   --lighthouse-pages N              Lighthouse pages, 1 to 5. Default: ${DEFAULT_OPTIONS.lighthousePages}.
   --lighthouse-path PATH            Path to an installed lighthouse package folder.
   --fail-on error|warning|never     Which severity makes the exit code 1. Default: error.
   --no-color                        Disable colour. Colour is also off when stdout is not a
-                                    terminal, when NO_COLOR is set and when --output is used.
+                                    terminal, when NO_COLOR is set and not empty, and when
+                                    --output is used.
   --quiet                           No progress on stderr.
   --version                         Print the version.
   --help                            Print this help.
 
-A bare host such as example.com is read as https://example.com/.
+The URL must use http or https. A bare host such as example.com is read as
+https://example.com/.
 
 Exit codes:
   0  No findings at or above the --fail-on severity.
   1  Findings at or above the --fail-on severity.
-  2  Usage error.
+  2  Usage error, or an output file that cannot be written.
   3  The start URL could not be audited.
 `;
 

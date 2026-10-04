@@ -7,7 +7,8 @@ export default defineConfig([
     // tsup injects a deprecated baseUrl option into its declaration build; TypeScript 6 rejects
     // it unless deprecations are acknowledged.
     dts: { compilerOptions: { ignoreDeprecations: "6.0" } },
-    clean: true,
+    // dist is cleaned once by scripts/clean.mjs before tsup runs, so the two entries never race.
+    clean: false,
     target: "node20",
   },
   {

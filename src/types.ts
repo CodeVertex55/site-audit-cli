@@ -215,6 +215,7 @@ export type Scope = {
   checkExternal: boolean;
   assetsNotMeasured: number;
   delayRaised: boolean;
+  crawlDelayMs: number | null; // the robots.txt Crawl-delay that was applied, null when none
   groups: Group[];
   notSeen: string[];
 };

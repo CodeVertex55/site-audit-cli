@@ -9,6 +9,10 @@ import {
 
 const URL0 = "https://site.example/dir/page";
 
+// Wall-clock bound for the large-input tests. It only guards against runaway (for example
+// quadratic) cost, so it is set well above normal run times, including runs under coverage.
+const RUNAWAY_MS = 15_000;
+
 function html(head: string, body = ""): string {
   return `<!doctype html><html lang="en"><head>${head}</head><body>${body}</body></html>`;
 }
@@ -873,7 +877,7 @@ describe("ordinary pages are read in full", () => {
     const body = `${"<p>word</p>".repeat(200000)}<!-- ${"x".repeat(2_800_000)} --><a href="/end">end</a>`;
     const started = Date.now();
     const result = extractWithStatus(html("", body), URL0);
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - started).toBeLessThan(RUNAWAY_MS);
     expect(result.truncated).toBe(false);
     expect(result.doc.wordCount).toBe(200001);
     expect(result.doc.links.map((l) => l.href)).toEqual(["/end"]);
@@ -968,7 +972,7 @@ describe("hostile and broken markup", () => {
     const markup = `<a href="/before">before</a>${`<${tag}/>`.repeat(100000)}<a href="/after">after</a>`;
     const started = Date.now();
     const result = extractWithStatus(html("", markup), URL0);
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - started).toBeLessThan(RUNAWAY_MS);
     expect(result.truncated).toBe(true);
     expect(result.doc.links.map((l) => l.href)).toEqual(["/before"]);
   });
@@ -1012,7 +1016,7 @@ describe("hostile and broken markup", () => {
     for (const body of [buttons, headings]) {
       const started = Date.now();
       const result = extractWithStatus(html("", body), URL0);
-      expect(Date.now() - started).toBeLessThan(5000);
+      expect(Date.now() - started).toBeLessThan(RUNAWAY_MS);
       expect(result.truncated).toBe(false);
       expect(result.doc.wordCount).toBe(120000);
     }
@@ -1084,7 +1088,7 @@ describe("hostile and broken markup", () => {
     const page = html("", `<a href="/before">before</a>${markup}`);
     const started = Date.now();
     const result = extractWithStatus(page, URL0);
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - started).toBeLessThan(RUNAWAY_MS);
     expect(result.truncated).toBe(truncated);
     expect(result.doc.links[0]?.href).toBe("/before");
     expect(elementDepth(parseBounded(page).root)).toBeLessThanOrEqual(MAX_DEPTH);
@@ -1096,7 +1100,7 @@ describe("hostile and broken markup", () => {
       const page = opens + stray.repeat(Math.floor((5_000_000 - opens.length) / stray.length));
       const started = Date.now();
       const result = extractWithStatus(page, URL0);
-      expect(Date.now() - started, stray).toBeLessThan(5000);
+      expect(Date.now() - started, stray).toBeLessThan(RUNAWAY_MS);
       expect(result.truncated).toBe(false);
     }
   }, 30000);
@@ -1105,7 +1109,7 @@ describe("hostile and broken markup", () => {
     const page = "<br>".repeat(1_250_000);
     const started = Date.now();
     const result = extractWithStatus(page, URL0);
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - started).toBeLessThan(RUNAWAY_MS);
     expect(result.truncated).toBe(true);
     expect(parseBounded(page).root.children).toHaveLength(MAX_NODES);
   }, 20000);
@@ -1116,7 +1120,7 @@ describe("hostile and broken markup", () => {
     expect(parseBounded(page).truncated).toBe(false);
     const started = Date.now();
     const result = extractWithStatus(page, URL0);
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - started).toBeLessThan(RUNAWAY_MS);
     expect(result.truncated).toBe(true);
   });
 
@@ -1131,7 +1135,7 @@ describe("hostile and broken markup", () => {
     const markup = `${"<label>".repeat(MAX_DEPTH - 10)}${'<input type="text">'.repeat(30000)}`;
     const started = Date.now();
     const result = extractWithStatus(html("", markup), URL0);
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - started).toBeLessThan(RUNAWAY_MS);
     // 30000 controls pass the per-page cap, so the first 5000 are kept and the page is flagged.
     expect(result.truncated).toBe(true);
     expect(result.doc.formControls).toHaveLength(5000);

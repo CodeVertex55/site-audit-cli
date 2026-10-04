@@ -20,7 +20,7 @@ describe("registry", () => {
   });
 
   test("no text field contains an em dash, an en dash or an exclamation mark", () => {
-    const banned = /[–—!]/;
+    const banned = /[\u2013\u2014!]/;
     for (const c of CHECKS) {
       for (const text of [c.title, c.why, c.fix, c.heuristic ?? ""]) {
         expect(banned.test(text), `${c.id}: ${text}`).toBe(false);
@@ -149,7 +149,7 @@ describe("check helpers", () => {
   });
 
   test("finding strips control and bidirectional characters and collapses whitespace", () => {
-    const hostile = "a\u001b[31m  b‮c\n\td\u0007";
+    const hostile = "a\u001b[31m  b\u202ec\n\td\u0007";
     const f = finding({ id: "SEO-X-001", group: "seo", severity: "info" }, null, hostile);
     expect(f.detail).toBe("a[31m bc d");
   });

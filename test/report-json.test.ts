@@ -41,3 +41,11 @@ describe("renderJson", () => {
     expect(JSON.parse(renderJson(result))).toEqual(result);
   });
 });
+
+test("the scope carries crawlDelayMs", () => {
+  const base = makeResult();
+  const parsed = JSON.parse(
+    renderJson({ ...base, scope: { ...base.scope, crawlDelayMs: 1500 } }),
+  ) as { scope: { crawlDelayMs: number | null } };
+  expect(parsed.scope.crawlDelayMs).toBe(1500);
+});

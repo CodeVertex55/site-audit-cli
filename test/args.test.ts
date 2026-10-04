@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { HELP_TEXT, parseCli } from "../src/args.js";
 import { UsageError } from "../src/errors.js";
+import { DEFAULT_OPTIONS } from "../src/types.js";
 
 describe("parseCli", () => {
   test("defaults", () => {
@@ -187,5 +188,15 @@ describe("parseCli", () => {
       expect(HELP_TEXT, flag).toContain(flag);
     }
     expect(HELP_TEXT).toContain("site-audit checks");
+  });
+
+  test("help text states the defaults, the URL schemes and what exit code 2 covers", () => {
+    const flat = HELP_TEXT.replace(/\s+/g, " ");
+    expect(flat).toContain("when NO_COLOR is set and not empty");
+    expect(flat).toContain(`Default: ${DEFAULT_OPTIONS.userAgent}`);
+    expect(flat).toContain("Default: all groups.");
+    expect(flat).toContain("The URL must use http or https.");
+    expect(flat).toContain("2 Usage error, or an output file that cannot be written.");
+    expect(flat).toContain("For sites you own or have permission to audit.");
   });
 });

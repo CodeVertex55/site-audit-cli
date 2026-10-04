@@ -37,8 +37,8 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsup",
-    "prepare": "tsup",
+    "build": "node scripts/clean.mjs && tsup",
+    "prepare": "node scripts/clean.mjs && tsup",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",

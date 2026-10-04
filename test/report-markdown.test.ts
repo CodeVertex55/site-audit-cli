@@ -225,3 +225,21 @@ describe("renderMarkdown safety", () => {
     expect(heading).not.toContain("<script>");
   });
 });
+
+describe("renderMarkdown crawl delay and mentions", () => {
+  test("lists the applied robots.txt Crawl-delay in the scope block", () => {
+    const base = makeResult();
+    const out = renderMarkdown({ ...base, scope: { ...base.scope, crawlDelayMs: 2000 } });
+    expect(out).toContain("- **Crawl delay:** 2 seconds (from robots.txt)");
+  });
+
+  test("an @ at the start of a word in site text cannot form a mention", () => {
+    const base = makeResult();
+    const out = renderMarkdown({ ...base, scope: { ...base.scope, originNote: "ping @team now" } });
+    expect(out).toContain("ping \\@team now");
+    expect(out).not.toMatch(/(^|[^\\])@team/);
+    expect(
+      renderMarkdown({ ...base, scope: { ...base.scope, originNote: "a@b.example" } }),
+    ).toContain("a@b.example");
+  });
+});

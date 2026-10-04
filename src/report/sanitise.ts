@@ -171,11 +171,12 @@ export function escapeHtml(value: string): string {
 
 /**
  * Escapes the characters Markdown reads as syntax anywhere in a line: backslash, backtick,
- * asterisk, underscore, square brackets, angle brackets, pipe and hash. Parentheses are left
- * alone because escaped brackets already stop a link from forming.
+ * asterisk, underscore, square brackets, angle brackets, pipe and hash, and an @ at the start of
+ * a word, so it cannot form a mention. Parentheses are left alone because escaped brackets
+ * already stop a link from forming.
  */
 export function escapeMarkdownInline(value: string): string {
-  return value.replace(/[\\`*_[\]<>|#]/g, "\\$&");
+  return value.replace(/[\\`*_[\]<>|#]|(?<![\p{L}\p{N}_])@/gu, "\\$&");
 }
 
 /** `escapeMarkdownInline`, plus a list marker (`-`, `+`, or a number and a dot or bracket) at the start. */

@@ -324,3 +324,12 @@ describe("durationText", () => {
     );
   });
 });
+
+describe("renderText crawl delay", () => {
+  test("prints the applied robots.txt Crawl-delay in the scope block, and nothing without one", () => {
+    const base = makeResult();
+    const out = renderText({ ...base, scope: { ...base.scope, crawlDelayMs: 1500 } });
+    expect(out).toMatch(/Crawl delay:\s+1\.5 seconds \(from robots\.txt\)/);
+    expect(renderText(makeResult())).not.toContain("Crawl delay");
+  });
+});

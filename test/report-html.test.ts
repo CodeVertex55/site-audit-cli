@@ -369,3 +369,12 @@ describe("renderHtml lighthouse", () => {
     expect($("#lighthouse").text()).toContain("Lighthouse timed out.");
   });
 });
+
+describe("renderHtml crawl delay", () => {
+  test("lists the applied robots.txt Crawl-delay in the scope block", () => {
+    const base = makeResult();
+    const $ = cheerio.load(renderHtml({ ...base, scope: { ...base.scope, crawlDelayMs: 1000 } }));
+    expect($("body").text()).toContain("1 second (from robots.txt)");
+    expect($("body").text()).toContain("Crawl delay");
+  });
+});

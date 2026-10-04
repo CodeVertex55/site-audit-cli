@@ -223,9 +223,22 @@ describe("buildScope", () => {
       checkExternal: true,
       assetsNotMeasured: 4,
       delayRaised: true,
+      crawlDelayMs: null,
       groups: ["health"],
       notSeen: [...NOT_SEEN],
     });
+  });
+
+  test("carries the applied robots.txt Crawl-delay, and null when robots.txt was ignored", () => {
+    const base = makeContext();
+    const ctx = { ...base, robots: { ...base.robots, crawlDelay: 1500 } };
+    expect(buildScope(ctx).crawlDelayMs).toBe(1500);
+    const ignored = {
+      ...ctx,
+      robots: { ...ctx.robots, ignored: true },
+      options: { ...ctx.options, ignoreRobots: true },
+    };
+    expect(buildScope(ignored).crawlDelayMs).toBeNull();
   });
 
   test("the not-seen list is the four fixed lines", () => {

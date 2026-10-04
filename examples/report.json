@@ -19,6 +19,7 @@
     "checkExternal": false,
     "assetsNotMeasured": 0,
     "delayRaised": false,
+    "crawlDelayMs": null,
     "groups": [
       "seo",
       "health",

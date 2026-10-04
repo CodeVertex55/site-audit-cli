@@ -13,7 +13,7 @@ type Harness = {
   files: Map<string, string>;
 };
 
-function harness(overrides: Partial<Pick<Io, "isTTY" | "env">> = {}): Harness {
+function harness(overrides: Partial<Pick<Io, "isTTY" | "env" | "canWrite">> = {}): Harness {
   const out: string[] = [];
   const err: string[] = [];
   const files = new Map<string, string>();
@@ -24,6 +24,7 @@ function harness(overrides: Partial<Pick<Io, "isTTY" | "env">> = {}): Harness {
       files.set(path, data);
       return Promise.resolve();
     },
+    canWrite: overrides.canWrite ?? (() => Promise.resolve(true)),
     isTTY: overrides.isTTY ?? false,
     env: overrides.env ?? {},
   };
@@ -184,6 +185,41 @@ describe("main: output", () => {
     expect(await main(args, io)).toBe(2);
     expect(h.err()).toBe("site-audit: could not write bad/r.json: EACCES: permission denied\n");
     expect(h.out()).toBe("");
+  });
+
+  test("an --output path that cannot be written returns 2 before any request is made", async () => {
+    const s = await clean();
+    const asked: string[] = [];
+    const h = harness({
+      canWrite: (path) => {
+        asked.push(path);
+        return Promise.resolve(false);
+      },
+    });
+    const args = [s.url("/"), "--delay", "0", "--quiet", "--output", "bad\u0007/r.json"];
+    expect(await main(args, h.io)).toBe(2);
+    expect(asked).toEqual(["bad\u0007/r.json"]);
+    expect(h.err()).toBe("site-audit: could not write bad/r.json\n");
+    expect(h.out()).toBe("");
+    expect(h.files.size).toBe(0);
+    expect(s.log).toEqual([]);
+  });
+
+  test("crawl notes go to stderr, cleaned, unless --quiet", async () => {
+    const target = await startSite(cleanSite());
+    try {
+      site = await startSite({ "/": { status: 302, headers: { location: target.url("/") } } });
+      const base = [site.url("/"), "--delay", "0", "--fail-on", "never", "--max-pages", "1"];
+      const loud = harness();
+      await main(base, loud.io);
+      expect(loud.err()).toContain(`Note: Start URL redirected to ${target.origin}/\n`);
+      expect(loud.out()).not.toContain("Note:");
+      const quiet = harness();
+      await main([...base, "--quiet"], quiet.io);
+      expect(quiet.err()).toBe("");
+    } finally {
+      await target.close();
+    }
   });
 
   test("progress goes to stderr unless --quiet", async () => {

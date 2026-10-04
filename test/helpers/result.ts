@@ -108,6 +108,7 @@ export function makeResult(over: Partial<AuditResult> = {}): AuditResult {
       checkExternal: false,
       assetsNotMeasured: 6,
       delayRaised: false,
+      crawlDelayMs: null,
       groups: [...GROUPS],
       notSeen: [...NOT_SEEN],
     },

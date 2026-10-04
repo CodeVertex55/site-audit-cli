@@ -73,6 +73,13 @@ export function scopeLines(result: AuditResult): { label: string; value: string 
     { label: "External links checked", value: yesNo(scope.checkExternal) },
     { label: "Assets not measured", value: String(scope.assetsNotMeasured) },
   );
+  if (scope.crawlDelayMs !== null) {
+    const seconds = scope.crawlDelayMs / 1000;
+    lines.push({
+      label: "Crawl delay",
+      value: `${seconds} ${seconds === 1 ? "second" : "seconds"} (from robots.txt)`,
+    });
+  }
   if (scope.delayRaised) {
     lines.push({
       label: "Delay raised",

@@ -462,6 +462,7 @@ describe("main with --lighthouse", () => {
       stdout: (s) => void out.push(s),
       stderr: (s) => void err.push(s),
       writeFile: () => Promise.resolve(),
+      canWrite: () => Promise.resolve(true),
       isTTY: false,
       env: {},
     };
