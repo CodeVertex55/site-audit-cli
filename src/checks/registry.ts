@@ -1,4 +1,5 @@
 import type { AuditResult, CheckDef, Group, SiteContext } from "../types.js";
+import { ACCESSIBILITY_CHECKS } from "./accessibility.js";
 import { htmlPages } from "./helpers.js";
 import { HEALTH_CHECKS } from "./health.js";
 import { PERFORMANCE_CHECKS } from "./performance.js";
@@ -9,6 +10,7 @@ export const CHECKS: readonly CheckDef[] = [
   ...SEO_CHECKS.map((spec): CheckDef => ({ ...spec, group: "seo" })),
   ...HEALTH_CHECKS.map((spec): CheckDef => ({ ...spec, group: "health" })),
   ...PERFORMANCE_CHECKS.map((spec): CheckDef => ({ ...spec, group: "performance" })),
+  ...ACCESSIBILITY_CHECKS.map((spec): CheckDef => ({ ...spec, group: "accessibility" })),
 ];
 
 export type CheckOutcome = AuditResult["checks"][number];

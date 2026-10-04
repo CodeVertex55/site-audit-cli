@@ -1,3 +1,8 @@
+export { audit } from "./audit.js";
+export type { AuditDeps } from "./audit.js";
+export { CHECKS } from "./checks/registry.js";
+export { parseStartUrl } from "./crawl/url.js";
+export { DEFAULT_OPTIONS } from "./types.js";
 export { VERSION } from "./version.js";
 export type {
   AssetRecord,
