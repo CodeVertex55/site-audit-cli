@@ -911,6 +911,22 @@ describe("hostile and broken markup", () => {
     expect(result.doc.links.map((l) => l.href)).toEqual(["/end"]);
   });
 
+  test("a 100-item list of unclosed items holding unclosed paragraphs is read in full", () => {
+    const body = `<ul>${"<li><p>item".repeat(100)}</ul><a href="/end">end</a>`;
+    const result = extractWithStatus(html("", body), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.wordCount).toBe(101);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/end"]);
+  });
+
+  test("100 unclosed bold tags across a run of paragraphs are read in full", () => {
+    const body = `${"<p>plain <b>bold".repeat(100)}<a href="/end">end</a>`;
+    const result = extractWithStatus(html("", body), URL0);
+    expect(result.truncated).toBe(false);
+    expect(result.doc.wordCount).toBe(201);
+    expect(result.doc.links.map((l) => l.href)).toEqual(["/end"]);
+  });
+
   test("tags written inside script text or comments are not elements", () => {
     const script = `<script>var s = "${"<div>".repeat(3000)}";</script><!-- ${"<div>".repeat(3000)} -->`;
     const result = extractWithStatus(html("", `${script}<a href="/ok">ok</a>`), URL0);

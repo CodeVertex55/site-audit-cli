@@ -418,10 +418,12 @@ function indexTree(root: TreeNode): TreeIndex {
 }
 
 // Parse limits. The parser compares every end tag it cannot match with each open element, so the
-// worst case costs MAX_DEPTH comparisons per end tag. At 128 the slowest 5 MB page of stray end
-// tags measured stays under 2 seconds. MAX_NODES sits above large ordinary pages (200000 flat
-// paragraphs are 400000 nodes) and bounds time and memory for hostile ones.
-export const MAX_DEPTH = 128;
+// worst case costs MAX_DEPTH comparisons per end tag. At 256 the slowest 5 MB page of stray end
+// tags measured takes a few seconds at most, and sloppy markup that the parser nests (unclosed
+// list items holding unclosed paragraphs, runs of unclosed inline tags) keeps room to fit.
+// MAX_NODES sits above large ordinary pages (200000 flat paragraphs are 400000 nodes) and bounds
+// time and memory for hostile ones.
+export const MAX_DEPTH = 256;
 export const MAX_NODES = 500_000;
 // Elements that make htmlparser2 record a foreign-content entry. It drops the entry only on an
 // explicit end tag of the same name, so implied closes of these elements leave entries behind.
