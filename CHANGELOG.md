@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The repository moved to github.com/CodeVertex55 after a GitHub account rename. The default user agent now links to the new address, and so do the install commands, the CI example and the package metadata. The old address still redirects.
+
 ## 1.0.0
 
 First release.

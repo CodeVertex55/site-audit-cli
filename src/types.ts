@@ -36,7 +36,7 @@ export const DEFAULT_OPTIONS: Omit<AuditOptions, "startUrl"> = {
   exclude: [],
   checkExternal: false,
   ignoreRobots: false,
-  userAgent: `${ROBOTS_TOKEN}/${VERSION} (+https://github.com/talha55/site-audit-cli)`,
+  userAgent: `${ROBOTS_TOKEN}/${VERSION} (+https://github.com/CodeVertex55/site-audit-cli)`,
   only: null,
   lighthouse: false,
   lighthousePages: 1,

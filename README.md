@@ -9,13 +9,13 @@ The screenshot shows the HTML report for the fixture site that ships with the te
 ## Quick start
 
 ```
-npx github:talha55/site-audit-cli https://example.com
+npx github:CodeVertex55/site-audit-cli https://example.com
 ```
 
 The report is printed to the terminal as text. To write a self-contained HTML report you can send to a client, give an output file:
 
 ```
-npx github:talha55/site-audit-cli https://example.com --output report.html
+npx github:CodeVertex55/site-audit-cli https://example.com --output report.html
 ```
 
 The format is taken from the file extension (`.html`, `.json`, `.md`) unless you pass `--format`. A bare host such as `example.com` is read as `https://example.com/`. Node 20.18.1 or later is required. Installing from GitHub builds the package with the `prepare` script.
@@ -37,7 +37,7 @@ There are 69 checks in four groups. Every check has an id, a default severity (e
 - 15 performance checks: server response time, HTML size, compression, cache lifetimes, page weight, image size, dimensions, lazy loading and format, render-blocking scripts and stylesheets, and the number of resources a page references.
 - 7 accessibility checks, static checks only, not an accessibility audit: image alt text, form labels, link names, generic link text, button names, skipped heading levels and iframe titles. Contrast, keyboard use, focus order and screen reader behaviour are not tested.
 
-The full list, with the reason, the fix and the threshold for each check, is in [docs/checks.md](docs/checks.md). You can print the same reference from the tool with `npx github:talha55/site-audit-cli checks`, or `site-audit checks` once it is installed. Add `--format markdown` for the Markdown form.
+The full list, with the reason, the fix and the threshold for each check, is in [docs/checks.md](docs/checks.md). You can print the same reference from the tool with `npx github:CodeVertex55/site-audit-cli checks`, or `site-audit checks` once it is installed. Add `--format markdown` for the Markdown form.
 
 ## What it does not do
 
@@ -65,7 +65,7 @@ The full list, with the reason, the fix and the threshold for each check, is in 
 ## How it behaves on your site
 
 - It sends only GET and HEAD requests.
-- It identifies itself with its own user agent, `site-audit-cli/<version> (+https://github.com/talha55/site-audit-cli)`. You can change the header with `--user-agent`. robots.txt is matched against the token `site-audit-cli`.
+- It identifies itself with its own user agent, `site-audit-cli/<version> (+https://github.com/CodeVertex55/site-audit-cli)`. You can change the header with `--user-agent`. robots.txt is matched against the token `site-audit-cli`.
 - For the audited site it reads robots.txt before the start page and obeys its rules. robots.txt itself is always requested. A URL on the audited host that its robots.txt disallows is not requested, whatever its scheme or port, with one exception: sitemap files (those robots.txt names, those a sitemap index lists, and the same-site redirect targets of any sitemap URL) are read even when their paths are disallowed. A guessed `/sitemap.xml` is not requested when robots.txt disallows it. A start URL that robots.txt disallows is never requested. Skipped URLs are counted in every report format and listed in the JSON report.
 - It sends at most one new request per second to a host by default, with up to two in flight. A robots.txt `Crawl-delay` larger than `--delay` wins, up to 30 seconds. When it does, a note on stderr says so and the scope block of the report shows it. Other notes, such as a moved origin, are printed on stderr too.
 - It backs off on 429 and 503 when it fetches pages, robots.txt, sitemaps and the soft 404 probe. It waits for `Retry-After` (up to 60 seconds, 5 seconds when the header is missing), retries up to twice, and after repeated 429 or 503 answers it doubles that host's delay once for the rest of the run (a delay of 0 becomes 1 second). Asset size requests, external link checks and the other probes are not retried.
@@ -88,29 +88,29 @@ site-audit checks [--format text|markdown]
 site-audit --version | --help
 ```
 
-| Option                                | Default                                                                 | Meaning                                                                                                                              |
-| ------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--format text\|json\|markdown\|html` | `text`                                                                  | Report format.                                                                                                                       |
-| `--output FILE`                       | stdout                                                                  | Write the report to a file. The format is inferred from `.json`, `.md`, `.markdown`, `.html` or `.htm` when `--format` is absent.    |
-| `--max-pages N`                       | `50`                                                                    | Stop after N HTML pages, 1 to 2000. Linked files that are not HTML have a separate cap of N.                                         |
-| `--max-depth N`                       | `3`                                                                     | Link depth from the start URL, 0 to 20.                                                                                              |
-| `--concurrency N`                     | `2`                                                                     | Parallel requests per host, 1 to 8.                                                                                                  |
-| `--delay MS`                          | `1000`                                                                  | Minimum gap between request starts to one host, 0 to 60000. A larger robots.txt `Crawl-delay` wins.                                  |
-| `--timeout MS`                        | `15000`                                                                 | Time limit per request, 1000 to 120000.                                                                                              |
-| `--max-assets N`                      | `300`                                                                   | Cap on unique asset size probes, 0 to 5000.                                                                                          |
-| `--exclude PATTERN`                   | none                                                                    | Skip URLs whose path matches the glob (`*` and `**` only). Can be repeated.                                                          |
-| `--check-external`                    | off                                                                     | Allow requests to other hosts: external link checks and third-party asset sizes.                                                     |
-| `--ignore-robots`                     | off                                                                     | Do not apply robots.txt. For sites you own or have permission to audit. The report shows a notice.                                   |
-| `--user-agent STRING`                 | `site-audit-cli/<version> (+https://github.com/talha55/site-audit-cli)` | Request header. robots.txt matching uses the token `site-audit-cli`.                                                                 |
-| `--only GROUP[,GROUP]`                | all groups                                                              | Limit to groups: `seo`, `health`, `performance`, `accessibility`.                                                                    |
-| `--lighthouse`                        | off                                                                     | Add Lighthouse lab results for the start URL.                                                                                        |
-| `--lighthouse-pages N`                | `1`                                                                     | Lighthouse pages, 1 to 5. The start URL comes first, then pages in crawl order.                                                      |
-| `--lighthouse-path PATH`              | auto                                                                    | Path to an installed `lighthouse` package folder.                                                                                    |
-| `--fail-on error\|warning\|never`     | `error`                                                                 | Which severity makes the exit code 1.                                                                                                |
-| `--no-color`                          | colour on a terminal                                                    | Disable colour. Colour is also off when stdout is not a terminal, when `NO_COLOR` is set and not empty, and when `--output` is used. |
-| `--quiet`                             | off                                                                     | No progress or notes on stderr.                                                                                                      |
-| `--version`                           |                                                                         | Print the version.                                                                                                                   |
-| `--help`                              |                                                                         | Print the help text.                                                                                                                 |
+| Option                                | Default                                                                      | Meaning                                                                                                                              |
+| ------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `--format text\|json\|markdown\|html` | `text`                                                                       | Report format.                                                                                                                       |
+| `--output FILE`                       | stdout                                                                       | Write the report to a file. The format is inferred from `.json`, `.md`, `.markdown`, `.html` or `.htm` when `--format` is absent.    |
+| `--max-pages N`                       | `50`                                                                         | Stop after N HTML pages, 1 to 2000. Linked files that are not HTML have a separate cap of N.                                         |
+| `--max-depth N`                       | `3`                                                                          | Link depth from the start URL, 0 to 20.                                                                                              |
+| `--concurrency N`                     | `2`                                                                          | Parallel requests per host, 1 to 8.                                                                                                  |
+| `--delay MS`                          | `1000`                                                                       | Minimum gap between request starts to one host, 0 to 60000. A larger robots.txt `Crawl-delay` wins.                                  |
+| `--timeout MS`                        | `15000`                                                                      | Time limit per request, 1000 to 120000.                                                                                              |
+| `--max-assets N`                      | `300`                                                                        | Cap on unique asset size probes, 0 to 5000.                                                                                          |
+| `--exclude PATTERN`                   | none                                                                         | Skip URLs whose path matches the glob (`*` and `**` only). Can be repeated.                                                          |
+| `--check-external`                    | off                                                                          | Allow requests to other hosts: external link checks and third-party asset sizes.                                                     |
+| `--ignore-robots`                     | off                                                                          | Do not apply robots.txt. For sites you own or have permission to audit. The report shows a notice.                                   |
+| `--user-agent STRING`                 | `site-audit-cli/<version> (+https://github.com/CodeVertex55/site-audit-cli)` | Request header. robots.txt matching uses the token `site-audit-cli`.                                                                 |
+| `--only GROUP[,GROUP]`                | all groups                                                                   | Limit to groups: `seo`, `health`, `performance`, `accessibility`.                                                                    |
+| `--lighthouse`                        | off                                                                          | Add Lighthouse lab results for the start URL.                                                                                        |
+| `--lighthouse-pages N`                | `1`                                                                          | Lighthouse pages, 1 to 5. The start URL comes first, then pages in crawl order.                                                      |
+| `--lighthouse-path PATH`              | auto                                                                         | Path to an installed `lighthouse` package folder.                                                                                    |
+| `--fail-on error\|warning\|never`     | `error`                                                                      | Which severity makes the exit code 1.                                                                                                |
+| `--no-color`                          | colour on a terminal                                                         | Disable colour. Colour is also off when stdout is not a terminal, when `NO_COLOR` is set and not empty, and when `--output` is used. |
+| `--quiet`                             | off                                                                          | No progress or notes on stderr.                                                                                                      |
+| `--version`                           |                                                                              | Print the version.                                                                                                                   |
+| `--help`                              |                                                                              | Print the help text.                                                                                                                 |
 
 Progress and notes go to stderr, and the report goes to stdout or to `--output`. The start URL must use http or https. An `--output` path is checked before the crawl starts, so a path that cannot be written ends the run with exit code 2 before any request is made.
 
@@ -163,7 +163,7 @@ jobs:
         with:
           node-version: 22
       - name: Audit
-        run: npx github:talha55/site-audit-cli https://staging.example.com --max-pages 30 --fail-on warning --quiet --output audit.html
+        run: npx github:CodeVertex55/site-audit-cli https://staging.example.com --max-pages 30 --fail-on warning --quiet --output audit.html
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -201,7 +201,7 @@ const result = await audit({
 console.log(result.summary.byGroup);
 ```
 
-Install it from GitHub with `npm install github:talha55/site-audit-cli`. The package exports `audit`, `DEFAULT_OPTIONS`, `parseStartUrl`, `CHECKS`, `VERSION`, the error classes `UnreachableError` and `UsageError`, and the types. `audit` resolves to the object described in [docs/json-schema.md](docs/json-schema.md). It rejects with an `UnreachableError` when the start URL cannot be audited. `lighthouse: true` in the options has no effect unless you also pass a `lighthouse` function in the second argument. The report renderers are not part of the package interface. Use the command line for the text, Markdown and HTML formats.
+Install it from GitHub with `npm install github:CodeVertex55/site-audit-cli`. The package exports `audit`, `DEFAULT_OPTIONS`, `parseStartUrl`, `CHECKS`, `VERSION`, the error classes `UnreachableError` and `UsageError`, and the types. `audit` resolves to the object described in [docs/json-schema.md](docs/json-schema.md). It rejects with an `UnreachableError` when the start URL cannot be audited. `lighthouse: true` in the options has no effect unless you also pass a `lighthouse` function in the second argument. The report renderers are not part of the package interface. Use the command line for the text, Markdown and HTML formats.
 
 ## Why there is no score
 
@@ -226,4 +226,4 @@ A check is a small function over the crawl result, with a spec, a positive test 
 
 MIT. Copyright 2026 Talha Muneer. See [LICENSE](LICENSE).
 
-Built by [Talha Muneer](https://www.talhamuneer.com), a full-stack and AI engineer working with agencies and businesses in the United States, the United Kingdom, Australia and Europe. More of his work: [GitHub](https://github.com/talha55) and [case studies](https://github.com/talha55/case-studies).
+Built by [Talha Muneer](https://www.talhamuneer.com), a full-stack and AI engineer working with agencies and businesses in the United States, the United Kingdom, Australia and Europe. More of his work: [GitHub](https://github.com/CodeVertex55) and [case studies](https://github.com/CodeVertex55/case-studies).
