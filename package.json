@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Command-line site audit for SEO, health, performance and static accessibility checks. Polite crawler, findings instead of a score.",
   "license": "MIT",
-  "author": "Talha Muneer",
+  "author": "Code Vertex",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/CodeVertex55/site-audit-cli.git"

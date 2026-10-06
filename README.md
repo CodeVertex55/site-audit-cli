@@ -224,6 +224,6 @@ A check is a small function over the crawl result, with a spec, a positive test 
 
 ## Licence
 
-MIT. Copyright 2026 Talha Muneer. See [LICENSE](LICENSE).
+MIT. Copyright 2026 Code Vertex. See [LICENSE](LICENSE).
 
-Built by [Talha Muneer](https://www.talhamuneer.com), a full-stack and AI engineer working with agencies and businesses in the United States, the United Kingdom, Australia and Europe. More of his work: [GitHub](https://github.com/CodeVertex55) and [case studies](https://github.com/CodeVertex55/case-studies).
+Built by [Code Vertex](https://github.com/CodeVertex55): full-stack and AI engineering for agencies and businesses in the United States, the United Kingdom, Australia and Europe. More work: [case studies](https://github.com/CodeVertex55/case-studies).
